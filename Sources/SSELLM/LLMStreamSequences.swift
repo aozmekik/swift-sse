@@ -39,7 +39,7 @@ extension AsyncSequence where Element == ServerSentEvent {
 
 /// The chunks of an OpenAI-compatible Chat Completions stream.
 ///
-/// Create one with ``_Concurrency/AsyncSequence/openAIChatCompletionChunks()``.
+/// Create one with `openAIChatCompletionChunks()`.
 public struct OpenAIChatCompletionChunkSequence<Base: AsyncSequence>: AsyncSequence
 where Base.Element == ServerSentEvent {
     /// The decoded chunks.
@@ -101,7 +101,7 @@ where Base.Element == ServerSentEvent {
 
 /// The events of an Anthropic Messages stream.
 ///
-/// Create one with ``_Concurrency/AsyncSequence/anthropicStreamEvents()``.
+/// Create one with `anthropicStreamEvents()`.
 public struct AnthropicStreamEventSequence<Base: AsyncSequence>: AsyncSequence
 where Base.Element == ServerSentEvent {
     /// The decoded events.

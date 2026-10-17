@@ -13,7 +13,7 @@ import SSE
 /// }
 /// ```
 ///
-/// Most code can use ``_Concurrency/AsyncSequence/openAIChatCompletionChunks()`` instead, which
+/// Most code can use `openAIChatCompletionChunks()` instead, which
 /// does this loop and stops at `[DONE]`.
 public enum OpenAIChatStreamEvent: Sendable, Hashable {
     /// A `chat.completion.chunk`.
