@@ -251,3 +251,62 @@ struct OpenAITests {
         #expect(afterError == nil)
     }
 }
+
+@Suite("Constructed LLM values")
+struct ConstructedValueTests {
+    @Test("Chunks built in code accumulate like decoded ones")
+    func constructedOpenAIChunks() {
+        var accumulator = OpenAIChatCompletionAccumulator()
+        accumulator.add(
+            OpenAIChatCompletionChunk(
+                id: "c1", model: "m",
+                choices: [
+                    .init(
+                        delta: .init(
+                            role: "assistant", content: "Hi",
+                            toolCalls: [
+                                .init(
+                                    index: 0, id: "call_1", type: "function",
+                                    function: .init(name: "f", arguments: "{}"))
+                            ]))
+                ]))
+        accumulator.add(
+            OpenAIChatCompletionChunk(
+                choices: [.init(finishReason: .toolCalls)],
+                usage: .init(
+                    promptTokens: 1, completionTokens: 2, totalTokens: 3, cachedPromptTokens: 0,
+                    reasoningTokens: 0)))
+        #expect(accumulator.text == "Hi")
+        #expect(accumulator.id == "c1")
+        #expect(accumulator.choices.first?.toolCalls.first?.name == "f")
+        #expect(accumulator.choices.first?.finishReason == .toolCalls)
+        #expect(accumulator.usage?.totalTokens == 3)
+    }
+
+    @Test("Anthropic events built in code accumulate like decoded ones")
+    func constructedAnthropicEvents() throws {
+        var message = AnthropicMessageAccumulator()
+        try message.add(.messageStart(.init(id: "msg", model: "m", usage: .init(inputTokens: 5))))
+        try message.add(.contentBlockStart(index: 0, block: .text("")))
+        try message.add(.contentBlockDelta(index: 0, delta: .text("Hello")))
+        try message.add(.contentBlockStop(index: 0))
+        try message.add(
+            .messageDelta(
+                .init(stopReason: .maxTokens, stopSequence: "END", usage: .init(outputTokens: 9))))
+        try message.add(.messageStop)
+        #expect(message.text == "Hello")
+        #expect(message.stopReason == .maxTokens)
+        #expect(message.stopSequence == "END")
+        #expect(message.usage == .init(inputTokens: 5, outputTokens: 9))
+        #expect(message.isComplete)
+    }
+
+    @Test("LLMStreamError and ProviderError describe themselves")
+    func descriptions() {
+        #expect(ProviderError(message: "plain").description == "plain")
+        #expect(
+            LLMStreamError.provider(ProviderError(type: "t", message: "m")).description
+                == "The provider reported an error: [t] m")
+        #expect(LLMStreamError.truncated.description.contains("incomplete"))
+    }
+}

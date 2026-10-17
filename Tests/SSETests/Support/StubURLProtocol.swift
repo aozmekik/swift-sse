@@ -15,6 +15,10 @@ final class StubURLProtocol: URLProtocol, @unchecked Sendable {
         var chunks: [String] = []
         /// When `true`, the response never finishes; the client has to cancel it.
         var hangs = false
+        /// When set, the load fails with this error before any response is sent.
+        var failure: URLError?
+        /// When `true`, nothing is sent at all; the client has to cancel the request.
+        var stalls = false
     }
 
     /// The scripted responses of one host and a record of what the client did.
@@ -99,6 +103,13 @@ final class StubURLProtocol: URLProtocol, @unchecked Sendable {
                 headerFields: scripted.headers)
         else {
             client?.urlProtocol(self, didFailWithError: URLError(.resourceUnavailable))
+            return
+        }
+        if let failure = scripted.failure {
+            client?.urlProtocol(self, didFailWithError: failure)
+            return
+        }
+        if scripted.stalls {
             return
         }
         client?.urlProtocol(self, didReceive: response, cacheStoragePolicy: .notAllowed)

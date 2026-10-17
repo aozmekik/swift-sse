@@ -326,6 +326,17 @@ struct EventSourceTests {
         #expect(transport.requests.count == 2)
     }
 
+    @Test("A response that is not HTTP throws notHTTPResponse")
+    func notHTTP() async throws {
+        let transport = StubTransport([.nonHTTPResponse])
+        let (_, error) = await collect(.stubbed(transport))
+        guard case .notHTTPResponse(let response)? = error as? EventSourceError else {
+            Issue.record("unexpected error \(String(describing: error))")
+            return
+        }
+        #expect(response.url == testURL)
+    }
+
     @Test("After an error the iterator returns nil")
     func finishedAfterError() async throws {
         let transport = StubTransport([

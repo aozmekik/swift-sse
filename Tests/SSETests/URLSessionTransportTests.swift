@@ -143,6 +143,52 @@ struct URLSessionTransportTests {
         #expect(server.stoppedLoads == 1)
     }
 
+    @Test("A failure before the response is a connection failure", arguments: Kind.allCases)
+    func failureBeforeResponse(kind: Kind) async throws {
+        let server = StubURLProtocol.Server([.init(failure: URLError(.cannotConnectToHost))])
+        let (_, error) = await collect(source(server, kind))
+
+        guard case .connectionFailed(let underlying)? = error as? EventSourceError else {
+            Issue.record("unexpected error \(String(describing: error))")
+            return
+        }
+        #expect((underlying as? URLError)?.code == .cannotConnectToHost)
+    }
+
+    @Test(
+        "Cancelling the task while waiting for the response cancels the request",
+        .timeLimit(.minutes(1)),
+        arguments: Kind.allCases
+    )
+    func cancellationBeforeResponse(kind: Kind) async throws {
+        let server = StubURLProtocol.Server([.init(stalls: true)])
+        let events = source(server, kind)
+        let task = Task { try await collectAll(events) }
+        while server.requests.isEmpty {
+            await Task.yield()  // Wait until the request reached the URL loading system.
+        }
+        task.cancel()
+
+        let result = await task.result
+        #expect(throws: CancellationError.self) { try result.get() }
+        for await _ in server.stops { break }
+        #expect(server.stoppedLoads == 1)
+    }
+
+    @Test("The delegate transport does not start a request for a cancelled task")
+    func delegateTransportChecksCancellation() async throws {
+        let server = StubURLProtocol.Server([.init(chunks: ["data: x\n\n"])])
+        let transport = URLSessionDelegateTransport(session: StubURLProtocol.makeSession())
+        let request = URLRequest(url: server.url)
+        let task = Task {
+            withUnsafeCurrentTask { $0?.cancel() }
+            _ = try await transport.connect(request)
+        }
+        let result = await task.result
+        #expect(throws: CancellationError.self) { try result.get() }
+        #expect(server.requests.isEmpty)
+    }
+
     @Test("The public initializer streams through the given session")
     func publicInitializer() async throws {
         let server = StubURLProtocol.Server([.init(chunks: ["data: hello\n\n"])])
@@ -156,5 +202,13 @@ struct URLSessionTransportTests {
         #expect(error == nil)
         #expect(events == [ServerSentEvent(data: "hello")])
     }
+}
+/// Collects all events, rethrowing errors.
+private func collectAll(_ source: EventSource) async throws -> [ServerSentEvent] {
+    var events: [ServerSentEvent] = []
+    for try await event in source {
+        events.append(event)
+    }
+    return events
 }
 #endif

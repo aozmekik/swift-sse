@@ -21,6 +21,8 @@ enum Script: Sendable {
 
     /// The connection attempt itself fails.
     case connectFails(URLError)
+    /// The response is not an HTTP response.
+    case nonHTTPResponse
     /// The server responds.
     case respond(status: Int, contentType: String?, chunks: [String], end: End)
 
@@ -63,6 +65,13 @@ final class StubTransport: EventStreamTransport {
         switch script {
         case .connectFails(let error):
             throw error
+        case .nonHTTPResponse:
+            let response = URLResponse(
+                url: testURL, mimeType: "text/event-stream", expectedContentLength: 0,
+                textEncodingName: nil)
+            let (body, continuation) = AsyncThrowingStream.makeStream(of: Data.self)
+            continuation.finish()
+            return EventStreamConnection(response: response, body: .chunks(body)) {}
         case .respond(let status, let contentType, let chunks, let end):
             let url = request.url ?? URL(fileURLWithPath: "/")
             let headers = contentType.map { ["Content-Type": $0] } ?? [:]
