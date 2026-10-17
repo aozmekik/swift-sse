@@ -1,0 +1,37 @@
+# SwiftPM / Xcode build products
+.build/
+.swiftpm/
+/Packages/
+DerivedData/
+*.xcodeproj/
+xcuserdata/
+*.xcworkspace/
+!*.xcodeproj/project.xcworkspace/
+Package.resolved
+
+# Documentation and coverage output
+/docs-build/
+*.doccarchive/
+*.profraw
+*.profdata
+coverage/
+*.lcov
+
+# Benchmark output
+/benchmark-results/
+
+# Python (examples/serve-fixture.py)
+__pycache__/
+*.pyc
+.venv/
+
+# Editors and OS
+.DS_Store
+.vscode/
+.idea/
+*.swp
+*~
+
+# Secrets
+.env
+.env.*
