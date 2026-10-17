@@ -63,7 +63,8 @@ extension EventSourceError: CustomStringConvertible {
             return "Expected Content-Type text/event-stream, got \(received)"
                 + Self.bodySuffix(body)
         case .notHTTPResponse(let response):
-            return "Expected an HTTP response, got \(type(of: response))"
+            let url = response.url?.absoluteString ?? "an unknown URL"
+            return "Expected an HTTP response from \(url)"
         case .connectionFailed(let underlying):
             return "Connection failed: \(underlying)"
         case .reconnectionLimitReached(let attempts, let lastError):
