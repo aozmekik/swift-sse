@@ -46,8 +46,8 @@ public enum EventSourceError: Error, Sendable {
     /// - Parameter underlying: The transport error, typically a `URLError`.
     case connectionFailed(underlying: any Error)
 
-    /// The reconnection policy's ``ReconnectionPolicy/maximumAttempts`` were used up without
-    /// receiving an event.
+    /// The reconnection policy's ``ReconnectionPolicy/maximumAttempts`` were used up by
+    /// consecutive attempts that failed or delivered no data.
     ///
     /// - Parameters:
     ///   - attempts: The number of consecutive reconnection attempts that were made.
@@ -73,7 +73,7 @@ extension EventSourceError: CustomStringConvertible {
             return "Connection failed: \(underlying)"
         case .reconnectionLimitReached(let attempts, let lastError):
             let cause = lastError.map { ": \($0)" } ?? " (the server closed the stream)"
-            return "Gave up after \(attempts) reconnection attempts without an event\(cause)"
+            return "Gave up after \(attempts) reconnection attempts without data\(cause)"
         }
     }
 

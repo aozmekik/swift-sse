@@ -243,7 +243,10 @@ extension EventSource {
         private var bufferedIndex = 0
         /// An error to throw once the already parsed events have been delivered.
         private var deferredError: (any Error)?
-        /// Reconnection attempts since the last event was received.
+        /// The number of consecutive failed connections.
+        ///
+        /// Attempts that failed and connections that ended without delivering a single byte of
+        /// body count; a connection that delivers data resets it.
         private var attempt = 0
 
         init(source: EventSource) {
@@ -335,21 +338,31 @@ extension EventSource {
 
         private mutating func read(from reader: ResponseBodyReader) async throws {
             var reader = reader
+            let isOpen: Bool
             do {
-                let isOpen = try await reader.read(into: &parser, events: &buffered)
-                if !buffered.isEmpty {
-                    attempt = 0
-                }
-                if isOpen {
-                    phase = .streaming(reader)
-                } else {
-                    connectionEnded(error: nil)
-                }
+                isOpen = try await reader.read(into: &parser, events: &buffered)
             } catch {
                 if Self.isCancellation(error) {
                     throw CancellationError()
                 }
+                resetBackoffIfDataArrived(reader)
                 connectionEnded(error: error)
+                return
+            }
+            resetBackoffIfDataArrived(reader)
+            if isOpen {
+                phase = .streaming(reader)
+            } else {
+                connectionEnded(error: nil)
+            }
+        }
+
+        /// A connection that delivered any data, events or only comments such as the keep-alive
+        /// comments that section 9.2.7 recommends, was a working connection: the next
+        /// reconnection starts again from the floor delay.
+        private mutating func resetBackoffIfDataArrived(_ reader: ResponseBodyReader) {
+            if reader.hasReceivedBytes {
+                attempt = 0
             }
         }
 

@@ -130,10 +130,10 @@ struct EventSourceTests {
         #expect(sleeper.recorded == [.seconds(3), .seconds(6), .seconds(12), .seconds(3)])
     }
 
-    @Test("A connection that closes without an event counts as a failed attempt")
+    @Test("A connection that closes without sending anything counts as a failed attempt")
     func emptyConnectionsBackOff() async throws {
         let transport = StubTransport([
-            .stream(": keep-alive\n"),
+            .stream(""),
             .stream(""),
             .stream("data: finally\n\n"),
         ])
@@ -141,6 +141,37 @@ struct EventSourceTests {
         _ = await collect(.stubbed(transport, sleeper: sleeper), limit: 1)
 
         #expect(sleeper.recorded == [.seconds(3), .seconds(6)])
+    }
+
+    @Test("Connections that only send keep-alive comments do not back off or use up attempts")
+    func heartbeatsResetBackoff() async throws {
+        let heartbeats = Array(
+            repeating: Script.stream(": keep-alive\n", ": keep-alive\n"), count: 12)
+        let transport = StubTransport(heartbeats + [.stream("data: news\n\n")])
+        let sleeper = RecordingSleeper()
+        let policy = ReconnectionPolicy.exponentialBackoff(
+            reconnectionTime: .seconds(1), maximumDelay: .seconds(30), maximumAttempts: 10)
+        let (events, error) = await collect(
+            .stubbed(transport, reconnection: policy, sleeper: sleeper), limit: 1)
+
+        #expect(error == nil)
+        #expect(events.map(\.data) == ["news"])
+        #expect(sleeper.recorded == Array(repeating: .seconds(1), count: 12))
+    }
+
+    @Test("Data received before a network error resets the backoff")
+    func dataBeforeErrorResetsBackoff() async throws {
+        let refused = URLError(.cannotConnectToHost)
+        let transport = StubTransport([
+            .connectFails(refused),
+            .connectFails(refused),
+            .stream(": hello\n", end: .fail(URLError(.networkConnectionLost))),
+            .stream("data: up\n\n"),
+        ])
+        let sleeper = RecordingSleeper()
+        _ = await collect(.stubbed(transport, sleeper: sleeper), limit: 1)
+
+        #expect(sleeper.recorded == [.seconds(3), .seconds(6), .seconds(3)])
     }
 
     @Test("A network error mid-stream reconnects after the events already received")

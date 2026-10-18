@@ -50,7 +50,7 @@ struct DescriptionTests {
             ),
             (
                 .reconnectionLimitReached(attempts: 3, lastError: nil),
-                "Gave up after 3 reconnection attempts without an event (the server closed the stream)"
+                "Gave up after 3 reconnection attempts without data (the server closed the stream)"
             ),
         ]
         for (error, expected) in cases {
@@ -63,6 +63,6 @@ struct DescriptionTests {
             attempts: 1, lastError: URLError(.timedOut))
         #expect(
             limited.description.hasPrefix(
-                "Gave up after 1 reconnection attempts without an event: "))
+                "Gave up after 1 reconnection attempts without data: "))
     }
 }

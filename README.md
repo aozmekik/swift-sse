@@ -174,15 +174,18 @@ let events = EventSource(
 )
 ```
 
-| Attempt since the last event | Delay before jitter (defaults) | With the default jitter of 0.5 |
+| Consecutive failed attempt | Delay before jitter (defaults) | With the default jitter of 0.5 |
 |---|---|---|
 | 1 | 3 s, or the server's `retry:` | 3 s to 4.5 s |
 | 2 | 6 s | 6 s to 9 s |
 | 3 | 12 s | 12 s to 18 s |
 | 6 and later | 60 s (the cap) | 60 s to 90 s |
 
-The default for `GET` requests is `.default` (the table above, retrying forever, as browsers do);
-for every other method it is `.disabled`. See
+A failed attempt is a connection that failed or closed without sending anything; a connection
+that delivers data, even only keep-alive comments, resets the count. Errors that no reconnection
+can fix (an unsupported URL, an untrusted certificate, cancelled authentication) throw
+`connectionFailed` at once. The default for `GET` requests is `.default` (the table above,
+retrying forever, as browsers do); for every other method it is `.disabled`. See
 [ADR 0002](docs/adr/0002-reconnection-delay.md) and [ADR 0004](docs/adr/0004-reconnect-only-get-by-default.md).
 
 ### Errors

@@ -16,21 +16,27 @@ The standard's processing model distinguishes three ways a connection can end:
 
 When the policy reconnects, it waits at least the stream's reconnection time: the value of the
 server's latest `retry:` field, or ``ReconnectionPolicy/reconnectionTime`` until the server sends
-one. After consecutive attempts that did not receive an event, the delay grows exponentially from
-the policy's own reconnection time, up to ``ReconnectionPolicy/maximumDelay``, and a random
+one. After consecutive failed attempts (connections that failed, or that closed without sending
+anything), the delay grows exponentially from the policy's own reconnection time, up to
+``ReconnectionPolicy/maximumDelay``, and a random
 fraction (``ReconnectionPolicy/jitter``) is added so that many clients that lost their connection
 at the same moment do not reconnect in lockstep. With the default policy:
 
-| Attempt since the last event | Delay before jitter | With jitter (default 0.5) |
+| Consecutive failed attempt | Delay before jitter | With jitter (default 0.5) |
 |---|---|---|
 | 1 | 3 s (or the server's `retry:`) | 3 s to 4.5 s |
 | 2 | 6 s | 6 s to 9 s |
 | 3 | 12 s | 12 s to 18 s |
 | 6 and later | 60 s | 60 s to 90 s |
 
-Receiving an event resets the count, so a healthy stream that drops reconnects after the floor
-delay. The server's reconnection time is never undercut, even when it is larger than the maximum
-delay.
+A connection that delivers any data, events or only keep-alive comments, resets the count, so a
+healthy stream that drops reconnects after the floor delay. The server's reconnection time is
+never undercut, even when it is larger than the maximum delay.
+
+Some failures are never retried, whatever the policy, because no reconnection can fix them: an
+invalid or unsupported URL, a URL that App Transport Security blocks, an untrusted server
+certificate, a missing or rejected client certificate, or cancelled authentication. Iteration
+throws ``EventSourceError/connectionFailed(underlying:)`` for them at once.
 
 ### Last-Event-ID
 

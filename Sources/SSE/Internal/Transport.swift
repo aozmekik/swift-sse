@@ -79,6 +79,9 @@ struct ResponseBodyReader {
     private var source: Source
     private var scratch: [UInt8] = []
 
+    /// Whether the body has delivered at least one byte so far.
+    private(set) var hasReceivedBytes = false
+
     init(_ body: ResponseBody) {
         switch body {
         #if !canImport(FoundationNetworking)
@@ -104,6 +107,7 @@ struct ResponseBodyReader {
         case .bytes(var iterator):
             defer { source = .bytes(iterator) }
             while let byte = try await iterator.next() {
+                hasReceivedBytes = true
                 scratch.append(byte)
                 // Events, `id` and `retry` only take effect at the end of a line, so handing the
                 // parser complete lines loses no latency while amortizing the parser call.
@@ -119,6 +123,7 @@ struct ResponseBodyReader {
         case .chunks(var iterator, let consumed):
             defer { source = .chunks(iterator, consumed: consumed) }
             while let chunk = try await iterator.next() {
+                hasReceivedBytes = hasReceivedBytes || !chunk.isEmpty
                 events.append(contentsOf: parser.parse(chunk))
                 consumed(chunk.count)
                 if !events.isEmpty {

@@ -7,9 +7,10 @@ import Foundation
 /// change that time with a `retry:` field, and allows a client to wait longer, for example with an
 /// exponential backoff after failed attempts. `ReconnectionPolicy` implements that as follows.
 ///
-/// Let *n* be the number of reconnection attempts since the last event was received, *floor* the
-/// reconnection time (the server's latest `retry:` value, or ``reconnectionTime`` when the server
-/// has not sent one) and *u* a uniformly distributed random number in `[0, 1)`:
+/// Let *n* be the number of consecutive failed connections (attempts that failed, and connections
+/// that ended without delivering a single byte of body), *floor* the reconnection time (the
+/// server's latest `retry:` value, or ``reconnectionTime`` when the server has not sent one) and
+/// *u* a uniformly distributed random number in `[0, 1)`:
 ///
 /// | Attempt | Delay before jitter                                                     |
 /// |---------|-------------------------------------------------------------------------|
@@ -22,8 +23,11 @@ import Foundation
 /// reconnection loop), and clients that lost their connections at the same moment spread out
 /// instead of reconnecting in lockstep.
 ///
-/// Receiving an event resets *n*, so a long-lived stream that drops once reconnects after the
-/// floor delay.
+/// A connection that delivers any data, an event or only a comment, resets *n*. A long-lived
+/// stream that drops once therefore reconnects after the floor delay, and so does a quiet stream
+/// that the server keeps alive with comments (as section 9.2.7 recommends) when a proxy closes it.
+/// Only failed attempts and connections that close without sending anything back off and count
+/// toward ``maximumAttempts``.
 ///
 /// Whatever the policy, errors that a reconnection cannot fix end iteration at once with
 /// ``EventSourceError/connectionFailed(underlying:)``: an invalid or unsupported URL, a URL that
@@ -50,9 +54,10 @@ public struct ReconnectionPolicy: Sendable, Hashable {
     /// The fraction of the delay that is added at random, in `0...1`.
     public let jitter: Double
 
-    /// The number of consecutive reconnection attempts without receiving an event after which
-    /// iteration fails with ``EventSourceError/reconnectionLimitReached(attempts:lastError:)``,
-    /// or `nil` to keep trying forever, as browsers do.
+    /// The number of consecutive failed reconnection attempts (attempts that failed, or whose
+    /// connection closed without delivering any data) after which iteration fails with
+    /// ``EventSourceError/reconnectionLimitReached(attempts:lastError:)``, or `nil` to keep
+    /// trying forever, as browsers do.
     public let maximumAttempts: Int?
 
     private init(
@@ -95,8 +100,8 @@ public struct ReconnectionPolicy: Sendable, Hashable {
     ///   - maximumDelay: The largest backoff delay before jitter. Defaults to 60 seconds.
     ///   - multiplier: The growth factor per consecutive failure; at least 1. Defaults to 2.
     ///   - jitter: The fraction of the delay added at random, in `0...1`. Defaults to 0.5.
-    ///   - maximumAttempts: The number of consecutive attempts without an event before giving up,
-    ///     at least 1, or `nil` (the default) for no limit.
+    ///   - maximumAttempts: The number of consecutive failed attempts before giving up, at least
+    ///     1, or `nil` (the default) for no limit.
     /// - Returns: A policy that reconnects with the given parameters.
     public static func exponentialBackoff(
         reconnectionTime: Duration = .seconds(3),
@@ -127,7 +132,7 @@ public struct ReconnectionPolicy: Sendable, Hashable {
     /// Returns the delay to wait before a reconnection attempt.
     ///
     /// - Parameters:
-    ///   - attempt: The 1-based number of reconnection attempts since the last event.
+    ///   - attempt: The 1-based number of consecutive failed connections.
     ///   - serverReconnectionTime: The latest `retry:` value from the server, if any.
     ///   - randomValue: A uniformly distributed random number in `[0, 1)` used for jitter.
     /// - Returns: The delay before the attempt.
