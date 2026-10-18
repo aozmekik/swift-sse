@@ -155,6 +155,29 @@ extension EventSource {
     }
 }
 
+extension URLRequest {
+    /// The last event ID that this request's `Last-Event-ID` header puts on the wire, decoded
+    /// from those bytes as UTF-8, or `nil` if the request has no such header.
+    ///
+    /// On Apple platforms the header value spells the UTF-8 bytes as ISO-8859-1 characters (see
+    /// `EventSource.lastEventIDHeaderValue(_:)`), so comparing the header string with the ID
+    /// would test the spelling instead of what the server receives.
+    var sentLastEventID: String? {
+        guard let value = value(forHTTPHeaderField: "Last-Event-ID") else { return nil }
+        #if canImport(FoundationNetworking)
+        return value
+        #else
+        let bytes = value.unicodeScalars.map { scalar in
+            guard let byte = UInt8(exactly: scalar.value) else {
+                preconditionFailure("Last-Event-ID contains U+\(String(scalar.value, radix: 16))")
+            }
+            return byte
+        }
+        return String(decoding: bytes, as: UTF8.self)
+        #endif
+    }
+}
+
 /// The URL of stubbed requests.
 let testURL: URL = {
     guard let url = URL(string: "https://example.test/stream") else {

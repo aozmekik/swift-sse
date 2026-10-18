@@ -137,6 +137,23 @@ public struct EventSource: AsyncSequence, Sendable {
         let method = request.httpMethod?.uppercased() ?? "GET"
         return method == "GET" ? .default : .disabled
     }
+
+    /// The `Last-Event-ID` header value that puts `lastEventID`, encoded as UTF-8, on the wire,
+    /// as section 9.2.4 requires.
+    ///
+    /// CFNetwork, which both Apple transports use, serializes header values as ISO-8859-1 and
+    /// truncates them at the first character that ISO-8859-1 cannot represent, so `café…` would
+    /// be sent as the bytes of `caf` and a Latin-1 `é`. Spelling every UTF-8 byte as the
+    /// ISO-8859-1 character with the same value makes it send exactly the UTF-8 bytes.
+    /// FoundationNetworking hands header strings to libcurl as UTF-8, so there the ID is used
+    /// as is.
+    static func lastEventIDHeaderValue(_ lastEventID: String) -> String {
+        #if canImport(FoundationNetworking)
+        return lastEventID
+        #else
+        return String(String.UnicodeScalarView(lastEventID.utf8.map { Unicode.Scalar($0) }))
+        #endif
+    }
 }
 
 // MARK: - Environment
@@ -340,7 +357,8 @@ extension EventSource {
             }
             let lastEventID = parser.lastEventID
             request.setValue(
-                lastEventID.isEmpty ? nil : lastEventID, forHTTPHeaderField: "Last-Event-ID")
+                lastEventID.isEmpty ? nil : EventSource.lastEventIDHeaderValue(lastEventID),
+                forHTTPHeaderField: "Last-Event-ID")
             request.cachePolicy = .reloadIgnoringLocalCacheData
             return request
         }

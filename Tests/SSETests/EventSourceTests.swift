@@ -28,7 +28,7 @@ struct EventSourceTests {
             ])
         let request = try #require(transport.requests.first)
         #expect(request.value(forHTTPHeaderField: "Accept") == "text/event-stream")
-        #expect(request.value(forHTTPHeaderField: "Last-Event-ID") == nil)
+        #expect(request.sentLastEventID == nil)
         #expect(request.cachePolicy == .reloadIgnoringLocalCacheData)
     }
 
@@ -59,7 +59,7 @@ struct EventSourceTests {
         let (events, _) = await collect(
             .stubbed(transport, reconnection: .disabled, lastEventID: "41"))
 
-        #expect(transport.requests.first?.value(forHTTPHeaderField: "Last-Event-ID") == "41")
+        #expect(transport.requests.first?.sentLastEventID == "41")
         #expect(events.first?.lastEventID == "41")
     }
 
@@ -76,11 +76,11 @@ struct EventSourceTests {
 
         #expect(events.map(\.data) == ["a", "b"])
         #expect(transport.requests.count == 2)
-        #expect(transport.requests[1].value(forHTTPHeaderField: "Last-Event-ID") == "7")
+        #expect(transport.requests[1].sentLastEventID == "7")
         #expect(sleeper.recorded == [.milliseconds(1500)])
     }
 
-    @Test("The last event ID persists across a reconnection without ids (WPT format-field-id-2)")
+    @Test("The last event ID persists across reconnections whose streams carry no id")
     func lastEventIDPersistsAcrossReconnection() async throws {
         let transport = StubTransport([
             .stream("id: \u{2026}\nretry: 200\ndata: hello\n\n"),
@@ -90,7 +90,7 @@ struct EventSourceTests {
         let (events, _) = await collect(.stubbed(transport), limit: 3)
 
         #expect(events.map(\.lastEventID) == ["\u{2026}", "\u{2026}", "\u{2026}"])
-        let headers = transport.requests.map { $0.value(forHTTPHeaderField: "Last-Event-ID") }
+        let headers = transport.requests.map(\.sentLastEventID)
         #expect(headers == [nil, "\u{2026}", "\u{2026}"])
     }
 
@@ -103,7 +103,7 @@ struct EventSourceTests {
         let (events, _) = await collect(.stubbed(transport), limit: 2)
 
         #expect(events.map(\.lastEventID) == ["", ""])
-        #expect(transport.requests[1].value(forHTTPHeaderField: "Last-Event-ID") == nil)
+        #expect(transport.requests[1].sentLastEventID == nil)
     }
 
     @Test("Consecutive failures back off exponentially and an event resets the backoff")
@@ -147,7 +147,7 @@ struct EventSourceTests {
 
         #expect(error == nil)
         #expect(events.map(\.data) == ["a", "b", "c"])
-        #expect(transport.requests[1].value(forHTTPHeaderField: "Last-Event-ID") == "1")
+        #expect(transport.requests[1].sentLastEventID == "1")
     }
 
     @Test("Jitter extends the delay by the configured fraction")
