@@ -37,7 +37,7 @@ struct ParserChunkingTests {
     @Test("Splitting at any two byte positions gives the same result", arguments: fixtures)
     func everyPairOfSplits(fixture: (name: String, bytes: [UInt8])) {
         let expected = parse(fixture.bytes)
-        let count = min(fixture.bytes.count, 80)
+        let count = fixture.bytes.count
         var mismatches = 0
         for first in 0...count {
             for second in first...count

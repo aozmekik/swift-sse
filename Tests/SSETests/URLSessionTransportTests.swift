@@ -164,9 +164,7 @@ struct URLSessionTransportTests {
         let server = StubURLProtocol.Server([.init(stalls: true)])
         let events = source(server, kind)
         let task = Task { try await collectAll(events) }
-        while server.requests.isEmpty {
-            await Task.yield()  // Wait until the request reached the URL loading system.
-        }
+        for await _ in server.arrivals { break }  // The request reached the URL loading system.
         task.cancel()
 
         let result = await task.result

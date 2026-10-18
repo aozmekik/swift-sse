@@ -30,13 +30,17 @@ final class StubURLProtocol: URLProtocol, @unchecked Sendable {
         }
 
         let host = "stub-\(UUID().uuidString.lowercased()).test"
+        /// Yields each time a request reaches the server.
+        let arrivals: AsyncStream<Void>
         /// Yields each time the URL loading system stops a load (cancelled or completed).
         let stops: AsyncStream<Void>
+        private let arrivalsContinuation: AsyncStream<Void>.Continuation
         private let stopsContinuation: AsyncStream<Void>.Continuation
         private let state: LockedState<State>
 
         init(_ responses: [Response]) {
             state = LockedState(State(responses: responses))
+            (arrivals, arrivalsContinuation) = AsyncStream.makeStream(of: Void.self)
             (stops, stopsContinuation) = AsyncStream.makeStream(of: Void.self)
             StubURLProtocol.servers.withLock { $0[host] = self }
         }
@@ -56,7 +60,8 @@ final class StubURLProtocol: URLProtocol, @unchecked Sendable {
         var stoppedLoads: Int { state.withLock(\.stoppedLoads) }
 
         fileprivate func nextResponse(for request: URLRequest) -> Response? {
-            state.withLock { state in
+            defer { arrivalsContinuation.yield() }
+            return state.withLock { state in
                 state.requests.append(request)
                 return state.responses.isEmpty ? nil : state.responses.removeFirst()
             }
