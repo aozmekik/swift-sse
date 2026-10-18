@@ -3,8 +3,9 @@ import Foundation
 /// A value protected by a lock, for state shared with Foundation callbacks.
 ///
 /// `Mutex` from the Synchronization module would be the modern choice, but it requires macOS 15
-/// / iOS 18, above this package's deployment targets.
-final class LockedState<State>: @unchecked Sendable {
+/// / iOS 18, above this package's deployment targets. `State` must be `Sendable` because values
+/// put in on one thread are taken out on another; the lock only makes the access exclusive.
+final class LockedState<State: Sendable>: @unchecked Sendable {
     private let lock = NSLock()
     private var state: State
 
