@@ -47,6 +47,37 @@ jobs:
       - name: Benchmark smoke run
         run: swift run -c release sse-benchmark --quick
 
+  apple-platforms:
+    name: Build for ${{ matrix.platform }}
+    runs-on: macos-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - platform: iOS
+            sdk: iphoneos
+            triple: arm64-apple-ios16.0
+          - platform: tvOS
+            sdk: appletvos
+            triple: arm64-apple-tvos16.0
+          - platform: watchOS (arm64_32, 32-bit Int)
+            sdk: watchos
+            triple: arm64_32-apple-watchos9.0
+          - platform: visionOS
+            sdk: xros
+            triple: arm64-apple-xros1.0
+    steps:
+      - uses: actions/checkout@v7
+      - uses: maxim-lobanov/setup-xcode@v1
+        with:
+          xcode-version: latest-stable
+      # Cross-compiles the libraries with the SDK that ships with Xcode; unlike xcodebuild, this
+      # needs no simulator runtime. The minimum OS versions are the manifest's deployment targets.
+      - name: Build SSE and SSELLM
+        run: >-
+          swift build --target SSELLM --triple "${{ matrix.triple }}"
+          --sdk "$(xcrun --sdk ${{ matrix.sdk }} --show-sdk-path)"
+
   linux:
     name: Linux (Swift ${{ matrix.swift }})
     runs-on: ubuntu-latest
