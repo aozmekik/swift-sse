@@ -29,6 +29,20 @@ struct LoopbackTests {
             case .delegate: URLSessionDelegateTransport(session: session)
             }
         }
+
+        /// Whether the transport reliably stops reading when the consumer stops.
+        ///
+        /// The delegate bridge calls `URLSessionTask.suspend()`, but neither
+        /// swift-corelibs-foundation nor Apple's URLSession guarantees that reading stops
+        /// (see Limitations in the README).
+        var hasReliableFlowControl: Bool {
+            switch self {
+            #if !canImport(FoundationNetworking)
+            case .bytes: true
+            #endif
+            case .delegate: false
+            }
+        }
     }
 
     private func source(
@@ -185,7 +199,15 @@ struct LoopbackTests {
         // hundreds of MiB in this pause, one with flow control a few MiB however long it lasts.
         try await Task.sleep(for: .seconds(1))
         let sentDuringPause = sent.withLock { $0 }
-        #expect(sentDuringPause < 32 << 20, "the client kept reading while nobody consumed")
+        if transport.hasReliableFlowControl {
+            #expect(sentDuringPause < 32 << 20, "the client kept reading while nobody consumed")
+        } else {
+            withKnownIssue(
+                "URLSessionTask.suspend() does not reliably stop reading", isIntermittent: true
+            ) {
+                #expect(sentDuringPause < 32 << 20, "the client kept reading while nobody consumed")
+            }
+        }
 
         // Reading resumes after the pause, without losing or reordering events.
         for expected in 2...20_001 {

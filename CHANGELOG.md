@@ -9,6 +9,12 @@ contain breaking changes.
 
 ## [0.1.0] - 2026-10-18
 
+### Known issues
+
+- On Linux, swift-corelibs-foundation keeps reading after `URLSessionTask.suspend()`, so a slow
+  consumer does not slow the server down and unread data can pile up in memory. Apple platforms
+  use `URLSession.bytes` and are not affected.
+
 ### Added
 
 - `EventStreamParser`: an incremental, byte-level parser for `text/event-stream` implementing

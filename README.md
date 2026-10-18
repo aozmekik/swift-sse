@@ -36,7 +36,8 @@ streaming formats.
   headers and body), `URLSession.bytes(for:)` on Apple platforms and a FoundationNetworking path on
   Linux, the request headers of the standard's fetch (`Accept`, `Cache-Control`/`Pragma:
   no-cache`, `Last-Event-ID` as UTF-8), HTTP status and `Content-Type` validation with typed
-  errors that carry the error body, `204 No Content` as a clean stop, and bounded buffering.
+  errors that carry the error body, `204 No Content` as a clean stop, and bounded buffering on Apple
+  platforms (see [Limitations](#limitations) for Linux).
 - **Reconnection** (`ReconnectionPolicy`): the server's `retry:` as a floor, capped exponential
   backoff with jitter after consecutive failures, an optional attempt limit, and `.disabled` for
   streams that must not be replayed. Non-`GET` requests do not reconnect unless you ask, and errors
@@ -261,9 +262,10 @@ fixture server for running them over real HTTP without an API key.
 
 - **Pull-based iteration** ([ADR 0001](docs/adr/0001-pull-based-async-sequence.md)): `next()`
   performs the I/O, so there is no background task and no reconnection unless the consumer asks
-  for another event. Buffering is bounded: `URLSession.bytes` has its own read-ahead, and the
-  `URLSessionDataDelegate` bridge used on Linux suspends the request above 1 MiB of unread data,
-  so a slow consumer slows the server down through TCP. The trade-off: no `readyState`/`onerror`
+  for another event. On Apple platforms buffering is bounded: `URLSession.bytes` has its own
+  read-ahead, so a slow consumer slows the server down through TCP. The `URLSessionDataDelegate`
+  bridge used on Linux suspends the request above 1 MiB of unread data, but swift-corelibs-foundation
+  does not reliably stop reading on `suspend()` (see [Limitations](#limitations)). The trade-off: no `readyState`/`onerror`
   observation, and each iterator opens its own connection.
 - **Byte-level parsing** ([ADR 0003](docs/adr/0003-byte-level-parser.md)): field names are
   matched as bytes and only kept values are decoded as UTF-8. Chunking cannot change the result.
@@ -352,17 +354,20 @@ The accumulators take a constant time per delta: 273 to 283 ns (OpenAI) and 177 
   extensions (for example `reasoning_content` fields) are not modelled. `JSONValue` keeps
   integers exact within the range of `Int64`; larger integers become `Double`s.
 - Development and every measurement above used Swift 6.3.2 on macOS. The manifest declares Swift
-  6.0 as the minimum, and the Linux CI job builds and tests with Swift 6.0, 6.3 and 6.4, but at the
-  time of writing that job had not run yet: Linux support is implemented, not yet verified. The
-  Linux flow control relies on `URLSessionTask.suspend()` removing the transfer from libcurl, as
-  the swift-corelibs-foundation source does; it has been measured only on macOS.
+  6.0 as the minimum, and the Linux CI job builds and tests with Swift 6.0, 6.3 and 6.4.
+- **Flow control on Linux is not reliable.** The delegate bridge calls `URLSessionTask.suspend()`
+  above 1 MiB of unread data, but swift-corelibs-foundation keeps reading from the socket. In the
+  back-pressure test on GitHub's Ubuntu runners, the server still wrote 44 MB (Swift 6.3), 658 MB
+  (Swift 6.4) and 2.2 GB (Swift 6.0) while the consumer paused for one second. On Linux, keep
+  consuming the stream promptly. The test records this as a known issue rather than hiding it.
 
 ## Roadmap
 
 - An optional per-event size limit with a typed error.
 - An observation hook for status UI and diagnostics: the response of each connection, reconnection
   attempts, delays and errors.
-- A pluggable transport for other HTTP clients, such as AsyncHTTPClient on Linux.
+- A pluggable transport for other HTTP clients, such as AsyncHTTPClient on Linux, which would also
+  give Linux real flow control.
 - Optional retry of `429`/`503` honoring `Retry-After`.
 - Publishing to the Swift Package Index once the API settles.
 
