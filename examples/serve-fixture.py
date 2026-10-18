@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Serve a recorded or synthetic event stream over HTTP, for trying the examples locally.
 
-    python3 examples/serve-fixture.py examples/fixtures/openai-chat.sse --port 8080
+    python3 examples/serve-fixture.py examples/fixtures/openai-chat.sse --port 18765
 
 Every request (any method, any path) gets 200 OK with Content-Type text/event-stream. The file is
 sent one block at a time (blocks end at a blank line) with a short pause between them, then the
@@ -9,8 +9,8 @@ connection is closed. If the request carries Last-Event-ID and a block has that 
 resumes after that block. With --max-blocks the server closes the connection early, which makes
 reconnection visible:
 
-    python3 examples/serve-fixture.py examples/fixtures/ticks.sse --port 8080 --max-blocks 2
-    swift run sse-tail http://127.0.0.1:8080/ --max-events 3
+    python3 examples/serve-fixture.py examples/fixtures/ticks.sse --port 18767 --max-blocks 2
+    swift run sse-tail http://127.0.0.1:18767/ --max-events 3
 
 Standard library only. This is a development aid, not a production server.
 """
@@ -35,7 +35,7 @@ def split_blocks(data: bytes) -> list[bytes]:
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("fixture", help="path to a .sse file")
-    parser.add_argument("--port", type=int, default=8080)
+    parser.add_argument("--port", type=int, default=18765)
     parser.add_argument("--delay", type=float, default=0.02, help="seconds between blocks")
     parser.add_argument("--requests", type=int, default=0, help="exit after N requests (0: never)")
     parser.add_argument(

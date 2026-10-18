@@ -19,19 +19,30 @@ swift run assemble-text --provider anthropic --file examples/fixtures/anthropic-
 ## Over HTTP, against the local fixture server
 
 ```sh
-python3 examples/serve-fixture.py examples/fixtures/openai-chat.sse --port 8080 &
-swift run assemble-text --provider openai --url http://127.0.0.1:8080/v1/chat/completions \
-    --body request.json   # any JSON body; the fixture server ignores it
+python3 examples/serve-fixture.py examples/fixtures/openai-chat.sse --port 18765 &
+echo '{"stream": true}' > /tmp/request.json   # any JSON body; the fixture server ignores it
+swift run assemble-text --provider openai --url http://127.0.0.1:18765/v1/chat/completions \
+    --body /tmp/request.json
 ```
+
+It prints the streamed text and then `[finish_reason: stop, 27 tokens]`.
 
 Reconnection, with a server that closes the connection after every two blocks:
 
 ```sh
-python3 examples/serve-fixture.py examples/fixtures/ticks.sse --port 8081 --max-blocks 2 &
-swift run sse-tail http://127.0.0.1:8081/ --max-events 3
+python3 examples/serve-fixture.py examples/fixtures/ticks.sse --port 18767 --max-blocks 2 &
+swift run sse-tail http://127.0.0.1:18767/ --max-events 3
 ```
 
-The server log shows the second request arriving with `Last-Event-ID: 1` and resuming after it.
+The server writes one line per request to standard error. The second request carries the ID of
+the last event received and resumes after it:
+
+```text
+GET / Last-Event-ID=None -> block 0
+GET / Last-Event-ID='1' -> block 2
+```
+
+Stop the server with `kill %1` (or `fg` and Ctrl-C) when you are done.
 
 ## Against a real API
 
@@ -41,7 +52,7 @@ OpenAI-compatible endpoint or the Anthropic Messages API, for example:
 ```sh
 swift run assemble-text --provider anthropic --url https://api.anthropic.com/v1/messages \
     --header "x-api-key: $ANTHROPIC_API_KEY" --header "anthropic-version: 2023-06-01" \
-    --body request.json   # a Messages request with "stream": true
+    --body request.json   # your Messages request, with "stream": true
 ```
 
 This path is exercised in this repository only against the local fixture server, not against
