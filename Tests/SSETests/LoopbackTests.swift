@@ -7,7 +7,8 @@ import Testing
 import FoundationNetworking
 #endif
 
-/// End-to-end tests over real TCP connections to a ``LoopbackServer``.
+/// End-to-end tests with the production transports and real `URLSession`s, over TCP connections
+/// to a ``LoopbackServer`` (or none, where the URL loading system fails first).
 ///
 /// These check what only the bytes on the wire show: how header values are encoded, which
 /// headers the URL loading system adds, and the transport's flow control.
@@ -188,5 +189,22 @@ struct LoopbackTests {
                 break
             }
         }
+    }
+
+    @Test(
+        "An unsupported URL scheme fails at once instead of reconnecting forever",
+        .timeLimit(.minutes(1)),
+        arguments: Transport.allCases
+    )
+    func unsupportedSchemeFails(transport: Transport) async throws {
+        let url = try #require(URL(string: "foo://example.test/stream"))
+        let (events, error) = await collect(source(url, transport, reconnection: .default))
+
+        #expect(events.isEmpty)
+        guard case .connectionFailed(let underlying)? = error as? EventSourceError else {
+            Issue.record("unexpected error \(String(describing: error))")
+            return
+        }
+        #expect((underlying as? URLError)?.code == .unsupportedURL)
     }
 }

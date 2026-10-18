@@ -24,6 +24,13 @@ import Foundation
 ///
 /// Receiving an event resets *n*, so a long-lived stream that drops once reconnects after the
 /// floor delay.
+///
+/// Whatever the policy, errors that a reconnection cannot fix end iteration at once with
+/// ``EventSourceError/connectionFailed(underlying:)``: an invalid or unsupported URL, a URL that
+/// App Transport Security blocks, an untrusted or not yet or no longer valid server certificate,
+/// a missing or rejected client certificate, cancelled or required authentication, file URL
+/// errors, and loads that the URL loading system cancelled although the iterating task was not
+/// cancelled. Without this rule, a typo in a URL scheme would retry forever without an error.
 public struct ReconnectionPolicy: Sendable, Hashable {
     /// Whether the event source reconnects at all.
     public let isEnabled: Bool

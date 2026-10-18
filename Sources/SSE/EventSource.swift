@@ -49,7 +49,9 @@ import FoundationNetworking
 /// When the stream ends or a network error occurs, the ``ReconnectionPolicy`` decides whether and
 /// when to reconnect. The default depends on the request method: `GET` requests reconnect with
 /// ``ReconnectionPolicy/default``; requests with any other method (typically `POST` requests to
-/// LLM APIs, which must not be replayed) use ``ReconnectionPolicy/disabled``.
+/// LLM APIs, which must not be replayed) use ``ReconnectionPolicy/disabled``. Errors that a
+/// reconnection cannot fix, such as an unsupported URL or an untrusted server certificate,
+/// throw ``EventSourceError/connectionFailed(underlying:)`` at once, whatever the policy.
 ///
 /// ### Platforms
 ///
@@ -142,6 +144,33 @@ public struct EventSource: AsyncSequence, Sendable {
     static func defaultPolicy(for request: URLRequest) -> ReconnectionPolicy {
         let method = request.httpMethod?.uppercased() ?? "GET"
         return method == "GET" ? .default : .disabled
+    }
+
+    /// Whether reconnecting cannot fix `error`, so that the event source fails at once instead
+    /// of retrying forever.
+    ///
+    /// The standard lets a client fail the connection instead of reestablishing it when it
+    /// "knows that to be futile" (section 9.2.3). These are failures that another attempt with
+    /// the same request and session cannot change: the URL cannot be loaded at all, App
+    /// Transport Security blocks it, the server's certificate is not trusted or a client
+    /// certificate is missing or rejected, authentication was cancelled or is required, a file
+    /// URL failed, or the URL loading system cancelled the load although the iterating task was
+    /// not cancelled (an invalidated session, or a delegate that cancelled an authentication
+    /// challenge).
+    static func isPermanentFailure(_ error: any Error) -> Bool {
+        guard let error = error as? URLError else { return false }
+        switch error.code {
+        case .badURL, .unsupportedURL, .appTransportSecurityRequiresSecureConnection,
+            .serverCertificateHasBadDate, .serverCertificateUntrusted,
+            .serverCertificateHasUnknownRoot, .serverCertificateNotYetValid,
+            .clientCertificateRejected, .clientCertificateRequired,
+            .userCancelledAuthentication, .userAuthenticationRequired,
+            .fileDoesNotExist, .fileIsDirectory, .noPermissionsToReadFile,
+            .cancelled:
+            return true
+        default:
+            return false
+        }
     }
 
     /// The `Last-Event-ID` header value that puts `lastEventID`, encoded as UTF-8, on the wire,
@@ -330,12 +359,14 @@ extension EventSource {
         /// events parsed so far are delivered.
         private mutating func connectionEnded(error: (any Error)?) {
             closeConnection()
+            if let error,
+                !source.reconnectionPolicy.isEnabled || EventSource.isPermanentFailure(error)
+            {
+                deferredError = EventSourceError.connectionFailed(underlying: error)
+                return
+            }
             guard source.reconnectionPolicy.isEnabled else {
-                if let error {
-                    deferredError = EventSourceError.connectionFailed(underlying: error)
-                } else {
-                    phase = .finished
-                }
+                phase = .finished
                 return
             }
             attempt += 1

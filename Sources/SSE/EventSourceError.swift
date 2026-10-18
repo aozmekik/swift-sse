@@ -37,7 +37,11 @@ public enum EventSourceError: Error, Sendable {
     /// - Parameter response: The response that was received.
     case notHTTPResponse(URLResponse)
 
-    /// The connection failed and the reconnection policy is ``ReconnectionPolicy/disabled``.
+    /// The connection failed and the event source does not reconnect.
+    ///
+    /// Either the reconnection policy is ``ReconnectionPolicy/disabled``, or the error is one that
+    /// reconnecting cannot fix, such as an unsupported URL or an untrusted server certificate;
+    /// ``ReconnectionPolicy`` lists them.
     ///
     /// - Parameter underlying: The transport error, typically a `URLError`.
     case connectionFailed(underlying: any Error)

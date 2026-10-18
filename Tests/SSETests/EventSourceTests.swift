@@ -217,6 +217,68 @@ struct EventSourceTests {
         #expect(lastError == nil)
     }
 
+    // MARK: Errors that reconnecting cannot fix
+
+    @Test(
+        "Errors that reconnecting cannot fix fail at once, whatever the policy",
+        arguments: [
+            URLError.Code.badURL, .unsupportedURL, .appTransportSecurityRequiresSecureConnection,
+            .serverCertificateHasBadDate, .serverCertificateUntrusted,
+            .serverCertificateHasUnknownRoot, .serverCertificateNotYetValid,
+            .clientCertificateRejected, .clientCertificateRequired,
+            .userCancelledAuthentication, .userAuthenticationRequired,
+            .fileDoesNotExist, .fileIsDirectory, .noPermissionsToReadFile, .cancelled,
+        ]
+    )
+    func permanentFailuresAreNotRetried(code: URLError.Code) async throws {
+        let transport = StubTransport([.connectFails(URLError(code))])
+        let sleeper = RecordingSleeper()
+        let (events, error) = await collect(.stubbed(transport, sleeper: sleeper))
+
+        #expect(events.isEmpty)
+        guard case .connectionFailed(let underlying)? = error as? EventSourceError else {
+            Issue.record("unexpected error \(String(describing: error))")
+            return
+        }
+        #expect((underlying as? URLError)?.code == code)
+        #expect(transport.requests.count == 1)
+        #expect(sleeper.recorded.isEmpty)
+    }
+
+    @Test(
+        "Transient network errors are retried",
+        arguments: [
+            URLError.Code.timedOut, .cannotFindHost, .cannotConnectToHost, .networkConnectionLost,
+            .dnsLookupFailed, .notConnectedToInternet, .secureConnectionFailed,
+            .badServerResponse, .unknown,
+        ]
+    )
+    func transientFailuresAreRetried(code: URLError.Code) async throws {
+        let transport = StubTransport([.connectFails(URLError(code)), .stream("data: up\n\n")])
+        let sleeper = RecordingSleeper()
+        let (events, error) = await collect(.stubbed(transport, sleeper: sleeper), limit: 1)
+
+        #expect(error == nil)
+        #expect(events.map(\.data) == ["up"])
+        #expect(sleeper.recorded == [.seconds(3)])
+    }
+
+    @Test("A permanent error mid-stream is thrown after the events already received")
+    func permanentFailureMidStream() async throws {
+        let transport = StubTransport([
+            .stream("data: a\n\n", end: .fail(URLError(.userCancelledAuthentication)))
+        ])
+        let (events, error) = await collect(.stubbed(transport))
+
+        #expect(events.map(\.data) == ["a"])
+        guard case .connectionFailed(let underlying)? = error as? EventSourceError else {
+            Issue.record("unexpected error \(String(describing: error))")
+            return
+        }
+        #expect((underlying as? URLError)?.code == .userCancelledAuthentication)
+        #expect(transport.requests.count == 1)
+    }
+
     // MARK: Disabled reconnection
 
     @Test("With reconnection disabled, the sequence ends when the server closes the stream")
