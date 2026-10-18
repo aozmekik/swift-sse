@@ -84,7 +84,7 @@ struct AnthropicTests {
             try delta(#"{"type":"future_delta","value":1}"#)
                 == .other(
                     type: "future_delta",
-                    payload: .object(["type": .string("future_delta"), "value": .number(1)])))
+                    payload: .object(["type": .string("future_delta"), "value": .integer(1)])))
     }
 
     @Test("message_delta, message_stop, ping, error and unknown events decode")
@@ -222,6 +222,26 @@ struct AnthropicTests {
             Issue.record("expected an unmodeled block")
             return
         }
+    }
+
+    @Test("A tool input that arrived complete keeps large integers exact")
+    func initialInputPrecision() throws {
+        var message = AnthropicMessageAccumulator()
+        try message.add(
+            try decode(
+                #"{"type":"content_block_start","index":0,"content_block":{"type":"server_tool_use","id":"srv_1","name":"lookup","input":{"query":"x","id":9007199254740993}}}"#
+            ))
+        guard case .toolUse(let toolUse) = message.content.first else {
+            Issue.record("expected a tool use")
+            return
+        }
+        struct Input: Decodable, Equatable {
+            var query: String
+            var id: Int64
+        }
+        let input = try toolUse.decodeInput(as: Input.self)
+        #expect(input == Input(query: "x", id: 9_007_199_254_740_993))
+        #expect(try toolUse.input["id"] == .integer(9_007_199_254_740_993))
     }
 
     @Test("An error event throws a provider error from the accumulator")
