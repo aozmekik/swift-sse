@@ -202,6 +202,8 @@ extension EventSource {
         var sleep: @Sendable (Duration) async throws -> Void
         /// Returns a uniformly distributed number in `[0, 1)` for jitter.
         var random: @Sendable () -> Double
+        /// How long the body of an error response is read for ``EventSourceError``.
+        var errorBodyTimeout: Duration = .seconds(1)
 
         static func live(session: URLSession) -> Environment {
             #if canImport(FoundationNetworking)
@@ -233,7 +235,7 @@ extension EventSource {
         }
 
         /// The largest error body kept in ``EventSourceError`` values.
-        private static let errorBodyLimit = 64 * 1024
+        static let errorBodyLimit = 64 * 1024
 
         private let source: EventSource
         private var phase = Phase.idle
@@ -319,14 +321,14 @@ extension EventSource {
                 return
             }
             guard response.statusCode == 200 else {
-                let body = await reader.readPrefix(limit: Self.errorBodyLimit)
+                let body = await readErrorBody(from: &reader, closing: lifetime)
                 lifetime.close()
                 throw EventSourceError.unexpectedStatusCode(
                     response.statusCode, response: response, body: body)
             }
             let contentType = response.value(forHTTPHeaderField: "Content-Type")
             guard MediaType.isEventStream(contentType) else {
-                let body = await reader.readPrefix(limit: Self.errorBodyLimit)
+                let body = await readErrorBody(from: &reader, closing: lifetime)
                 lifetime.close()
                 throw EventSourceError.unexpectedContentType(
                     contentType, response: response, body: body)
@@ -334,6 +336,32 @@ extension EventSource {
 
             connection = lifetime
             phase = .streaming(reader)
+        }
+
+        /// Reads the start of an error response's body, for at most ``errorBodyLimit`` bytes and
+        /// ``Environment/errorBodyTimeout``.
+        ///
+        /// A wrong-type response that keeps streaming (an NDJSON endpoint, a misconfigured
+        /// proxy) or an error body that stalls must not hold back the error, so when the time is
+        /// up the connection is closed, which ends the read with whatever has arrived.
+        private func readErrorBody(
+            from reader: inout ResponseBodyReader,
+            closing connection: ConnectionLifetime
+        ) async -> Data {
+            let timeout = source.environment.errorBodyTimeout
+            return await withTaskGroup(of: Void.self) { group in
+                group.addTask {
+                    do {
+                        try await Task.sleep(for: timeout)
+                        connection.close()
+                    } catch {
+                        // Cancelled: the body was read in time.
+                    }
+                }
+                let body = await reader.readPrefix(limit: Self.errorBodyLimit)
+                group.cancelAll()
+                return body
+            }
         }
 
         private mutating func read(from reader: ResponseBodyReader) async throws {

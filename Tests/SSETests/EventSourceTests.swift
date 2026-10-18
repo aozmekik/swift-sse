@@ -372,6 +372,40 @@ struct EventSourceTests {
         #expect(transport.cancelledConnections == 1)
     }
 
+    @Test("An error body that stalls is cut off after the error body timeout")
+    func stalledErrorBody() async throws {
+        let transport = StubTransport([
+            .respond(
+                status: 503, contentType: "application/json", chunks: ["{\"error\":"], end: .hang)
+        ])
+        let source = EventSource.stubbed(transport, errorBodyTimeout: .milliseconds(20))
+        let (_, error) = await collect(source)
+
+        guard case .unexpectedStatusCode(503, _, let body)? = error as? EventSourceError else {
+            Issue.record("unexpected error \(String(describing: error))")
+            return
+        }
+        #expect(String(decoding: body, as: UTF8.self) == "{\"error\":")
+        #expect(transport.cancelledConnections == 1)
+    }
+
+    @Test("An error body is cut off at 64 KiB")
+    func longErrorBody() async throws {
+        let line = String(repeating: "e", count: 1_023) + "\n"
+        let transport = StubTransport([
+            .respond(
+                status: 500, contentType: "text/plain",
+                chunks: Array(repeating: line, count: 100), end: .hang)
+        ])
+        let (_, error) = await collect(.stubbed(transport))
+
+        guard case .unexpectedStatusCode(500, _, let body)? = error as? EventSourceError else {
+            Issue.record("unexpected error \(String(describing: error))")
+            return
+        }
+        #expect(body.count == EventSource.AsyncIterator.errorBodyLimit)
+    }
+
     @Test(
         "Content types that are text/event-stream are accepted",
         arguments: [

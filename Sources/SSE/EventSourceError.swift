@@ -18,8 +18,9 @@ public enum EventSourceError: Error, Sendable {
     /// - Parameters:
     ///   - statusCode: The HTTP status code.
     ///   - response: The full response, for headers such as `Retry-After`.
-    ///   - body: The start of the response body (at most 64 KiB), which for LLM APIs usually
-    ///     contains a JSON error description.
+    ///   - body: The start of the response body: at most 64 KiB, and only what arrived within
+    ///     one second of the response head. For LLM APIs it usually contains a JSON error
+    ///     description.
     case unexpectedStatusCode(Int, response: HTTPURLResponse, body: Data)
 
     /// The server answered 200 OK with a `Content-Type` other than `text/event-stream`.
@@ -29,7 +30,8 @@ public enum EventSourceError: Error, Sendable {
     /// - Parameters:
     ///   - contentType: The `Content-Type` header, or `nil` if the response had none.
     ///   - response: The full response.
-    ///   - body: The start of the response body (at most 64 KiB).
+    ///   - body: The start of the response body: at most 64 KiB, and only what arrived within
+    ///     one second of the response head.
     case unexpectedContentType(String?, response: HTTPURLResponse, body: Data)
 
     /// The response was not an HTTP response, for example because the URL was not `http(s)`.

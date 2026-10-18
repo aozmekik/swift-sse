@@ -35,7 +35,8 @@ struct LoopbackTests {
         _ url: URL,
         _ transport: Transport,
         reconnection: ReconnectionPolicy? = .default,
-        lastEventID: String = ""
+        lastEventID: String = "",
+        errorBodyTimeout: Duration = .seconds(1)
     ) -> EventSource {
         EventSource(
             request: URLRequest(url: url),
@@ -44,7 +45,8 @@ struct LoopbackTests {
             environment: .init(
                 transport: transport.make(URLSession(configuration: .ephemeral)),
                 sleep: { _ in },
-                random: { 0 }
+                random: { 0 },
+                errorBodyTimeout: errorBodyTimeout
             )
         )
     }
@@ -206,5 +208,68 @@ struct LoopbackTests {
             return
         }
         #expect((underlying as? URLError)?.code == .unsupportedURL)
+    }
+
+    @Test(
+        "A wrong content type is reported promptly while the server keeps streaming",
+        .timeLimit(.minutes(1)),
+        arguments: Transport.allCases
+    )
+    func slowWrongContentType(transport: Transport) async throws {
+        // An endpoint that answers 200 with NDJSON and streams a token every 50 ms for a minute.
+        // (Not text/plain: for that type CFNetwork itself holds the response head back until
+        // 512 bytes or the end of the body have arrived, to sniff the content.)
+        let server = try LoopbackServer { connection in
+            guard connection.readRequestHead() != nil else { return }
+            connection.writeEventStreamHead(contentType: "application/x-ndjson")
+            for _ in 0..<1_200 {
+                guard connection.write("token ") else { return }
+                Thread.sleep(forTimeInterval: 0.05)
+            }
+        }
+        defer { server.stop() }
+        let events = source(server.url(), transport, errorBodyTimeout: .milliseconds(300))
+
+        let clock = ContinuousClock()
+        let start = clock.now
+        let (_, error) = await collect(events)
+        let elapsed = clock.now - start
+
+        guard
+            case .unexpectedContentType("application/x-ndjson", _, let body)? = error
+                as? EventSourceError
+        else {
+            Issue.record("unexpected error \(String(describing: error))")
+            return
+        }
+        #expect(String(decoding: body, as: UTF8.self).hasPrefix("token"))
+        // Generous: the error must come from the timeout, not from the end of the body a minute
+        // later.
+        #expect(elapsed < .seconds(15))
+    }
+
+    @Test(
+        "An error body that stalls does not hold back the error",
+        .timeLimit(.minutes(1)),
+        arguments: Transport.allCases
+    )
+    func stalledErrorBody(transport: Transport) async throws {
+        let server = try LoopbackServer { connection in
+            guard connection.readRequestHead() != nil else { return }
+            connection.write(
+                "HTTP/1.1 500 Internal Server Error\r\nContent-Type: application/json\r\n"
+                    + "Content-Length: 100\r\n\r\n{\"error\":\"overloa")
+            connection.waitUntilClosed()
+        }
+        defer { server.stop() }
+        let events = source(server.url(), transport, errorBodyTimeout: .milliseconds(300))
+
+        let (_, error) = await collect(events)
+
+        guard case .unexpectedStatusCode(500, _, let body)? = error as? EventSourceError else {
+            Issue.record("unexpected error \(String(describing: error))")
+            return
+        }
+        #expect(String(decoding: body, as: UTF8.self) == "{\"error\":\"overloa")
     }
 }

@@ -97,6 +97,8 @@ final class StubTransport: EventStreamTransport {
             return EventStreamConnection(response: response, body: .chunks(body)) {
                 [state] in
                 state.withLock { $0.cancelledConnections += 1 }
+                // Like a real transport, cancelling ends a body that is still open.
+                continuation.finish(throwing: URLError(.cancelled))
             }
         }
     }
@@ -138,7 +140,8 @@ extension EventSource {
         reconnection: ReconnectionPolicy? = nil,
         lastEventID: String = "",
         sleeper: RecordingSleeper = RecordingSleeper(),
-        random: Double = 0
+        random: Double = 0,
+        errorBodyTimeout: Duration = .seconds(1)
     ) -> EventSource {
         var request = URLRequest(url: testURL)
         request.httpMethod = method
@@ -149,7 +152,8 @@ extension EventSource {
             environment: Environment(
                 transport: transport,
                 sleep: sleeper.sleep,
-                random: { random }
+                random: { random },
+                errorBodyTimeout: errorBodyTimeout
             )
         )
     }

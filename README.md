@@ -209,8 +209,8 @@ do {
 |---|---|
 | 200 with `text/event-stream` (parameters ignored) | events |
 | 204 No Content | the sequence ends normally |
-| any other status | `EventSourceError.unexpectedStatusCode` with the response and up to 64 KiB of body, not retried |
-| 200 with another content type | `EventSourceError.unexpectedContentType`, not retried |
+| any other status | `EventSourceError.unexpectedStatusCode` with the response and the start of the body (up to 64 KiB, read for at most 1 s), not retried |
+| 200 with another content type | `EventSourceError.unexpectedContentType`, likewise, not retried |
 | network error or end of stream | reconnect per policy; with `.disabled`, `connectionFailed` or the end of the sequence |
 | attempt limit reached | `EventSourceError.reconnectionLimitReached` |
 | task cancelled | `CancellationError`, request cancelled |

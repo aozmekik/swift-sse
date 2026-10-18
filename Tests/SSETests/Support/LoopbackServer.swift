@@ -146,6 +146,16 @@ final class LoopbackConnection {
         return LoopbackRequestHead(bytes: head)
     }
 
+    /// Blocks until the client closes the connection, discarding anything it sends.
+    func waitUntilClosed() {
+        var buffer = [UInt8](repeating: 0, count: 1_024)
+        while true {
+            let count = buffer.withUnsafeMutableBytes { Glue.read(descriptor, $0) }
+            if count < 0, errno == EINTR { continue }
+            guard count > 0 else { return }
+        }
+    }
+
     /// Writes all of `bytes`.
     ///
     /// - Returns: `false` if the client closed the connection.
