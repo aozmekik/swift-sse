@@ -143,4 +143,50 @@ struct LoopbackTests {
         #expect(events.map(\.data) == ["cached?"])
         #expect(cache.cachedResponse(for: URLRequest(url: server.url())) == nil)
     }
+
+    @Test(
+        "A consumer that stops reading slows the server down instead of buffering without bound",
+        .timeLimit(.minutes(1)),
+        arguments: Transport.allCases
+    )
+    func backPressure(transport: Transport) async throws {
+        // The server writes numbered 1 KiB events as fast as the connection accepts them, so
+        // the bytes it manages to write while the consumer is paused are what the client
+        // buffered (plus the kernel's socket buffers).
+        let sent = LockedState(0)
+        let server = try LoopbackServer { connection in
+            guard connection.readRequestHead() != nil else { return }
+            connection.writeEventStreamHead()
+            let padding = String(repeating: "x", count: 1_000)
+            var id = 0
+            while true {
+                var block = ""
+                for _ in 0..<64 {
+                    id += 1
+                    block += "id: \(id)\ndata: \(padding)\n\n"
+                }
+                guard connection.write(block) else { return }
+                sent.withLock { $0 += block.utf8.count }
+            }
+        }
+        defer { server.stop() }
+
+        var iterator = source(server.url(), transport, reconnection: .disabled)
+            .makeAsyncIterator()
+        _ = try await iterator.next()
+        // Real time, but not a timing assumption: a transport without flow control receives
+        // hundreds of MiB in this pause, one with flow control a few MiB however long it lasts.
+        try await Task.sleep(for: .seconds(1))
+        let sentDuringPause = sent.withLock { $0 }
+        #expect(sentDuringPause < 32 << 20, "the client kept reading while nobody consumed")
+
+        // Reading resumes after the pause, without losing or reordering events.
+        for expected in 2...20_001 {
+            let event = try #require(try await iterator.next())
+            guard event.lastEventID == String(expected) else {
+                Issue.record("expected event \(expected), got \(event.lastEventID)")
+                break
+            }
+        }
+    }
 }

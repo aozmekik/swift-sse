@@ -31,7 +31,10 @@ enum ResponseBody {
     case bytes(URLSession.AsyncBytes)
     #endif
     /// A sequence of chunks, as delivered by `URLSessionDataDelegate` or by a test.
-    case chunks(AsyncThrowingStream<Data, any Error>)
+    ///
+    /// The reader calls `consumed` with the size of every chunk it has processed, so that the
+    /// producer can apply flow control.
+    case chunks(AsyncThrowingStream<Data, any Error>, consumed: @Sendable (Int) -> Void = { _ in })
 }
 
 /// Cancels a connection when the last reference to it goes away.
@@ -66,7 +69,8 @@ struct ResponseBodyReader {
         #if !canImport(FoundationNetworking)
         case bytes(URLSession.AsyncBytes.AsyncIterator)
         #endif
-        case chunks(AsyncThrowingStream<Data, any Error>.AsyncIterator)
+        case chunks(
+            AsyncThrowingStream<Data, any Error>.AsyncIterator, consumed: @Sendable (Int) -> Void)
     }
 
     /// Bytes are handed to the parser at line terminators or when this many have accumulated.
@@ -81,8 +85,8 @@ struct ResponseBodyReader {
         case .bytes(let bytes):
             source = .bytes(bytes.makeAsyncIterator())
         #endif
-        case .chunks(let chunks):
-            source = .chunks(chunks.makeAsyncIterator())
+        case .chunks(let chunks, let consumed):
+            source = .chunks(chunks.makeAsyncIterator(), consumed: consumed)
         }
     }
 
@@ -112,10 +116,11 @@ struct ResponseBodyReader {
                 }
             }
         #endif
-        case .chunks(var iterator):
-            defer { source = .chunks(iterator) }
+        case .chunks(var iterator, let consumed):
+            defer { source = .chunks(iterator, consumed: consumed) }
             while let chunk = try await iterator.next() {
                 events.append(contentsOf: parser.parse(chunk))
+                consumed(chunk.count)
                 if !events.isEmpty {
                     return true
                 }
@@ -143,10 +148,11 @@ struct ResponseBodyReader {
                     prefix.append(byte)
                 }
             #endif
-            case .chunks(var iterator):
-                defer { source = .chunks(iterator) }
+            case .chunks(var iterator, let consumed):
+                defer { source = .chunks(iterator, consumed: consumed) }
                 while prefix.count < limit, let chunk = try await iterator.next() {
                     prefix.append(chunk.prefix(limit - prefix.count))
+                    consumed(chunk.count)
                 }
             }
         } catch {

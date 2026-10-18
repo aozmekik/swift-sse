@@ -61,7 +61,10 @@ struct URLSessionDelegateTransport: EventStreamTransport {
         } onCancel: {
             task.cancel()
         }
-        return EventStreamConnection(response: response, body: .chunks(delegate.body)) {
+        let body = ResponseBody.chunks(delegate.body) { [delegate] count in
+            delegate.didConsume(count)
+        }
+        return EventStreamConnection(response: response, body: body) {
             task.cancel()
         }
     }
@@ -72,14 +75,35 @@ struct URLSessionDelegateTransport: EventStreamTransport {
 /// The response head resumes the continuation passed to ``start(_:)``; body chunks are yielded
 /// to ``body``; completion finishes ``body`` and invalidates the session, which releases this
 /// delegate. Responses are never stored in the session's cache.
-final class StreamingDataDelegate: NSObject, URLSessionDataDelegate, @unchecked Sendable {
+///
+/// `URLSession` pushes body chunks as fast as the network delivers them, so the delegate applies
+/// flow control: when more than ``highWaterMark`` bytes have been received but not consumed
+/// (see ``didConsume(_:)``), it suspends the task, which stops reading from the socket and lets
+/// TCP flow control slow the server down; it resumes the task once the reader has drained the
+/// buffer to ``lowWaterMark``.
+final class StreamingDataDelegate: NSObject, URLSessionDataDelegate, Sendable {
+    /// The buffered byte count above which the task is suspended.
+    static let highWaterMark = 1 << 20
+    /// The buffered byte count at or below which a suspended task is resumed.
+    static let lowWaterMark = 256 << 10
+
     /// The response body.
     ///
     /// Terminating it (or dropping its last iterator) cancels the task.
     let body: AsyncThrowingStream<Data, any Error>
 
+    private struct FlowControl {
+        var task: URLSessionDataTask?
+        var bufferedBytes = 0
+        var isSuspended = false
+    }
+
     private let bodyContinuation: AsyncThrowingStream<Data, any Error>.Continuation
     private let pendingResponse = LockedState<CheckedContinuation<URLResponse, any Error>?>(nil)
+    private let flowControl = LockedState(FlowControl())
+    /// Serializes `suspend()` and `resume()` calls in the order the flow control decided them,
+    /// without calling into `URLSession` while holding the lock.
+    private let taskControl = DispatchQueue(label: "tr.fergani.swift-sse.flow-control")
 
     override init() {
         (body, bodyContinuation) = AsyncThrowingStream.makeStream(of: Data.self)
@@ -91,6 +115,7 @@ final class StreamingDataDelegate: NSObject, URLSessionDataDelegate, @unchecked 
         bodyContinuation.onTermination = { _ in
             task.cancel()
         }
+        flowControl.withLock { $0.task = task }
         return try await withCheckedThrowingContinuation { continuation in
             guard !Task.isCancelled else {
                 continuation.resume(throwing: CancellationError())
@@ -98,6 +123,18 @@ final class StreamingDataDelegate: NSObject, URLSessionDataDelegate, @unchecked 
             }
             pendingResponse.withLock { $0 = continuation }
             task.resume()
+        }
+    }
+
+    /// Records that the reader has consumed `count` bytes of ``body``, resuming a suspended task
+    /// once the buffer has drained to ``lowWaterMark``.
+    func didConsume(_ count: Int) {
+        flowControl.withLock { flow in
+            flow.bufferedBytes -= count
+            guard flow.isSuspended, flow.bufferedBytes <= Self.lowWaterMark, let task = flow.task
+            else { return }
+            flow.isSuspended = false
+            taskControl.async { task.resume() }
         }
     }
 
@@ -112,6 +149,12 @@ final class StreamingDataDelegate: NSObject, URLSessionDataDelegate, @unchecked 
     }
 
     func urlSession(_ session: URLSession, dataTask: URLSessionDataTask, didReceive data: Data) {
+        flowControl.withLock { flow in
+            flow.bufferedBytes += data.count
+            guard !flow.isSuspended, flow.bufferedBytes > Self.highWaterMark else { return }
+            flow.isSuspended = true
+            taskControl.async { dataTask.suspend() }
+        }
         bodyContinuation.yield(data)
     }
 

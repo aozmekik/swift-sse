@@ -17,10 +17,13 @@ import FoundationNetworking
 /// ```
 ///
 /// Each iterator owns its own connection, which it opens lazily on the first call to `next()`.
-/// The sequence is pull-based: bytes are read from the network only while you are waiting for the
-/// next event, and when the connection ends a reconnection is attempted only when you ask for
-/// another event. Breaking out of the loop closes the connection, and cancelling the iterating
-/// task cancels the request and makes `next()` throw `CancellationError`.
+/// The sequence is pull-based: the body is parsed only while you wait for the next event, and
+/// when the connection ends a reconnection is attempted only when you ask for another event.
+/// The transport reads a bounded amount ahead of you (`URLSession`'s own read-ahead on Apple
+/// platforms; at most about 1 MiB on Linux, where the client suspends the request above that),
+/// so a slow consumer slows the server down through TCP flow control instead of growing memory.
+/// Breaking out of the loop closes the connection, and cancelling the iterating task cancels the
+/// request and makes `next()` throw `CancellationError`.
 ///
 /// ### Requests
 ///
@@ -76,7 +79,8 @@ public struct EventSource: AsyncSequence, Sendable {
     ///   - session: The URL session to use. Defaults to `URLSession.shared`. Configure idle
     ///     timeouts through `request.timeoutInterval` or the session configuration: a stream that
     ///     is silent for longer than the timeout fails with `URLError.timedOut`, which counts as a
-    ///     network error.
+    ///     network error. Not asking for events for longer than the timeout while the transport's
+    ///     buffer is full can also end in `URLError.timedOut`.
     ///   - reconnection: The reconnection policy, or `nil` (the default) to reconnect `GET`
     ///     requests with ``ReconnectionPolicy/default`` and never reconnect other methods.
     ///   - lastEventID: The initial last event ID string, for resuming a stream across app
