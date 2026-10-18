@@ -58,9 +58,9 @@ public struct OpenAIChatCompletionAccumulator: Sendable {
             usage = chunkUsage
         }
         for update in chunk.choices {
-            var choice = choicesByIndex[update.index] ?? Choice(index: update.index)
-            choice.apply(update)
-            choicesByIndex[update.index] = choice
+            // Mutated in place: copying the choice out and back would copy its text on every
+            // delta, which makes accumulation quadratic in the length of the response.
+            choicesByIndex[update.index, default: Choice(index: update.index)].apply(update)
         }
     }
 
@@ -89,7 +89,11 @@ public struct OpenAIChatCompletionAccumulator: Sendable {
             }
             content += update.delta.content ?? ""
             if let fragment = update.delta.refusal {
-                refusal = (refusal ?? "") + fragment
+                if refusal == nil {
+                    refusal = fragment
+                } else {
+                    refusal?.append(fragment)
+                }
             }
             for (position, fragment) in update.delta.toolCalls.enumerated() {
                 let index = fragment.index ?? inferredIndex(of: fragment, isFirst: position == 0)

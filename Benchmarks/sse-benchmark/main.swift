@@ -1,14 +1,17 @@
-// sse-benchmark: measures EventStreamParser throughput on large synthetic streams.
+// sse-benchmark: measures EventStreamParser throughput on large synthetic streams, and how the
+// SSELLM accumulators scale with the number of deltas.
 //
 //   swift run -c release sse-benchmark            # full run (64 MiB per workload)
 //   swift run -c release sse-benchmark --quick    # small smoke run, numbers not meaningful
 //
 // Every workload is generated in memory, deterministically, before timing starts. Each
-// configuration is run once to warm up and then `runs` times; the table reports the median and
-// the range. Only parsing is timed: no I/O, no networking, no JSON decoding.
+// configuration is run once to warm up and then `runs` times; the tables report the median and
+// the range. Only parsing, or only accumulation, is timed: no I/O, no networking, no JSON
+// decoding.
 
 import Foundation
 import SSE
+import SSELLM
 
 struct Workload {
     var name: String
@@ -98,6 +101,63 @@ func measure(_ bytes: [UInt8], chunkSize: Int, runs: Int) -> Measurement {
     return Measurement(seconds: seconds.sorted(), events: events, checksum: checksum)
 }
 
+/// Times `body` once to warm up and then `runs` times; returns the sorted durations in seconds.
+func time(runs: Int, _ body: () throws -> Void) throws -> [Double] {
+    let clock = ContinuousClock()
+    var seconds: [Double] = []
+    for run in 0...runs {
+        var failure: (any Error)?
+        let elapsed = clock.measure {
+            do { try body() } catch { failure = error }
+        }
+        if let failure { throw failure }
+        if run > 0 {
+            let (whole, fraction) = elapsed.components
+            seconds.append(Double(whole) + Double(fraction) * 1e-18)
+        }
+    }
+    return seconds.sorted()
+}
+
+/// Accumulates `count` text deltas of four bytes into each accumulator; with a linear
+/// implementation the time per delta stays flat as `count` grows.
+func measureAccumulators(counts: [Int], runs: Int) throws {
+    print("")
+    print("Accumulators: \(runs) runs after one warm-up, median (min-max), 4-byte text deltas.")
+    print("")
+    print("| Accumulator | Deltas | Total (ms) | ns per delta |")
+    print("|---|---:|---:|---:|")
+    for count in counts {
+        let chunks = (0..<count).map { _ in
+            OpenAIChatCompletionChunk(choices: [.init(delta: .init(content: "abcd"))])
+        }
+        let openAI = try time(runs: runs) {
+            var accumulator = OpenAIChatCompletionAccumulator()
+            for chunk in chunks {
+                accumulator.add(chunk)
+            }
+            precondition(accumulator.text.utf8.count == count * 4)
+        }
+        let events: [AnthropicStreamEvent] =
+            [.contentBlockStart(index: 0, block: .text(""))]
+            + (0..<count).map { _ in .contentBlockDelta(index: 0, delta: .text("abcd")) }
+        let anthropic = try time(runs: runs) {
+            var message = AnthropicMessageAccumulator()
+            for event in events {
+                try message.add(event)
+            }
+            precondition(message.text.utf8.count == count * 4)
+        }
+        for (name, seconds) in [("OpenAI", openAI), ("Anthropic", anthropic)] {
+            let median = seconds[seconds.count / 2]
+            let fastest = format(seconds[0] * 1e3, decimals: 1)
+            let slowest = format(seconds[seconds.count - 1] * 1e3, decimals: 1)
+            let total = "\(format(median * 1e3, decimals: 1)) (\(fastest)-\(slowest))"
+            print("| \(name) | \(count) | \(total) | \(format(median / Double(count) * 1e9)) |")
+        }
+    }
+}
+
 func format(_ value: Double, decimals: Int = 0) -> String {
     String(format: "%.\(decimals)f", value)
 }
@@ -132,3 +192,5 @@ print("")
 for workload in workloads(size: 1_024) {
     print("- \(workload.name): \(workload.description)")
 }
+
+try measureAccumulators(counts: quick ? [1_000, 4_000] : [5_000, 20_000, 80_000], runs: runs)

@@ -43,7 +43,7 @@ let package = Package(
         ),
         .executableTarget(
             name: "sse-benchmark",
-            dependencies: ["SSE"],
+            dependencies: ["SSE", "SSELLM"],
             path: "Benchmarks/sse-benchmark",
             swiftSettings: strictSettings
         ),

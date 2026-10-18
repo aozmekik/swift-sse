@@ -124,21 +124,40 @@ public struct AnthropicMessageAccumulator: Sendable {
             }
         }
 
+        /// Appends `delta` to the block in place.
+        ///
+        /// Each case takes the payload out and replaces `self` with a placeholder before
+        /// appending, so that the payload's storage is uniquely referenced and grows in place;
+        /// rebuilding the case from `text + fragment` would copy the whole text on every delta.
         mutating func apply(_ delta: AnthropicStreamEvent.Delta) {
-            switch (self, delta) {
-            case (.text(let text), .text(let fragment)):
-                self = .text(text + fragment)
-            case (.toolUse(var toolUse), .inputJSON(let fragment)):
+            switch delta {
+            case .text(let fragment):
+                guard case .text(var text) = self else { return }
+                self = .placeholder
+                text += fragment
+                self = .text(text)
+            case .inputJSON(let fragment):
+                guard case .toolUse(var toolUse) = self else { return }
+                self = .placeholder
                 toolUse.inputJSON += fragment
                 self = .toolUse(toolUse)
-            case (.thinking(let thinking, let signature), .thinking(let fragment)):
-                self = .thinking(thinking + fragment, signature: signature)
-            case (.thinking(let thinking, let signature), .signature(let fragment)):
-                self = .thinking(thinking, signature: signature + fragment)
-            default:
+            case .thinking(let fragment):
+                guard case .thinking(var thinking, let signature) = self else { return }
+                self = .placeholder
+                thinking += fragment
+                self = .thinking(thinking, signature: signature)
+            case .signature(let fragment):
+                guard case .thinking(let thinking, var signature) = self else { return }
+                self = .placeholder
+                signature += fragment
+                self = .thinking(thinking, signature: signature)
+            case .citation, .other:
                 break  // Citations and unmodeled deltas are available from the events.
             }
         }
+
+        /// A value that holds no storage, assigned while a payload is being extended.
+        private static let placeholder = Block.redactedThinking(data: "")
     }
 
     /// A tool call assembled from `content_block_start` and its `input_json_delta` fragments.
