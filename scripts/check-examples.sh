@@ -37,7 +37,7 @@ serve() {
     shift
     python3 examples/serve-fixture.py "$@" 2>"$log" &
     pids+=("$!")
-    for _ in $(seq 1 100); do
+    for _ in $(seq 1 300); do
         grep -q listening "$log" 2>/dev/null && return 0
         sleep 0.1
     done

@@ -122,7 +122,11 @@ struct LoopbackTests {
                     + "Content-Length: \(body.utf8.count)\r\n\r\n\(body)")
         }
         defer { server.stop() }
+        #if canImport(FoundationNetworking)
+        let cache = URLCache(memoryCapacity: 1 << 20, diskCapacity: 0, diskPath: nil)
+        #else
         let cache = URLCache(memoryCapacity: 1 << 20, diskCapacity: 0)
+        #endif
         let configuration = URLSessionConfiguration.default
         configuration.urlCache = cache
         // The default `Cache-Control: no-cache` already keeps URLSession from storing the
