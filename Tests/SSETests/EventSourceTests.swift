@@ -28,17 +28,21 @@ struct EventSourceTests {
             ])
         let request = try #require(transport.requests.first)
         #expect(request.value(forHTTPHeaderField: "Accept") == "text/event-stream")
+        #expect(request.value(forHTTPHeaderField: "Cache-Control") == "no-cache")
+        #expect(request.value(forHTTPHeaderField: "Pragma") == "no-cache")
         #expect(request.sentLastEventID == nil)
         #expect(request.cachePolicy == .reloadIgnoringLocalCacheData)
     }
 
-    @Test("The caller's method, body and Accept header are kept")
+    @Test("The caller's method, body and Accept, Cache-Control and Pragma headers are kept")
     func keepsCallerRequest() async throws {
         let transport = StubTransport([.stream("data: x\n\n")])
         var request = URLRequest(url: testURL)
         request.httpMethod = "POST"
         request.httpBody = Data("{}".utf8)
         request.setValue("text/event-stream, application/json", forHTTPHeaderField: "Accept")
+        request.setValue("no-store", forHTTPHeaderField: "Cache-Control")
+        request.setValue("private", forHTTPHeaderField: "Pragma")
         let source = EventSource(
             request: request,
             reconnection: nil,
@@ -51,6 +55,8 @@ struct EventSourceTests {
         #expect(sent.httpMethod == "POST")
         #expect(sent.httpBody == Data("{}".utf8))
         #expect(sent.value(forHTTPHeaderField: "Accept") == "text/event-stream, application/json")
+        #expect(sent.value(forHTTPHeaderField: "Cache-Control") == "no-store")
+        #expect(sent.value(forHTTPHeaderField: "Pragma") == "private")
     }
 
     @Test("An initial last event ID is sent with the first request")

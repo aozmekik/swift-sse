@@ -24,10 +24,12 @@ import FoundationNetworking
 ///
 /// ### Requests
 ///
-/// Every request carries `Accept: text/event-stream` (unless the request sets its own `Accept`),
-/// ignores the local cache, and, when the last event ID string is not empty, carries a
-/// `Last-Event-ID` header. Any method and body can be used, so the same type serves `GET` event
-/// streams and `POST` endpoints of LLM APIs.
+/// Every request carries `Accept: text/event-stream`, `Cache-Control: no-cache` and
+/// `Pragma: no-cache`, each unless the request sets that header itself, as the standard's fetch
+/// with the cache mode "no-store" does. It bypasses the local cache, and its response is not
+/// stored in the session's `URLCache`. When the last event ID string is not empty, the request
+/// carries it in a `Last-Event-ID` header. Any method and body can be used, so the same type
+/// serves `GET` event streams and `POST` endpoints of LLM APIs.
 ///
 /// ### Responses
 ///
@@ -352,8 +354,15 @@ extension EventSource {
 
         private func prepareRequest() -> URLRequest {
             var request = source.request
-            if request.value(forHTTPHeaderField: "Accept") == nil {
-                request.setValue("text/event-stream", forHTTPHeaderField: "Accept")
+            // Section 9.2.2 fetches with the cache mode "no-store", for which Fetch adds
+            // `Pragma: no-cache` and `Cache-Control: no-cache` unless the request has them.
+            let defaults = [
+                ("Accept", "text/event-stream"),
+                ("Cache-Control", "no-cache"),
+                ("Pragma", "no-cache"),
+            ]
+            for (field, value) in defaults where request.value(forHTTPHeaderField: field) == nil {
+                request.setValue(value, forHTTPHeaderField: field)
             }
             let lastEventID = parser.lastEventID
             request.setValue(

@@ -8,16 +8,33 @@ import FoundationNetworking
 /// The default transport on Apple platforms: `URLSession.bytes(for:)`.
 ///
 /// It uses the caller's session as is, including its delegate (authentication challenges,
-/// metrics) and its configuration.
+/// metrics) and its configuration. A task delegate keeps responses out of the session's
+/// `URLCache`; every other delegate message still goes to the session's delegate.
 struct URLSessionBytesTransport: EventStreamTransport {
     let session: URLSession
 
     func connect(_ request: URLRequest) async throws -> EventStreamConnection {
-        let (bytes, response) = try await session.bytes(for: request)
+        let (bytes, response) = try await session.bytes(for: request, delegate: NoStoreDelegate())
         let task = bytes.task
         return EventStreamConnection(response: response, body: .bytes(bytes)) {
             task.cancel()
         }
+    }
+}
+
+/// A task delegate that only declines to store the response in the cache.
+///
+/// Section 9.2.2 fetches with the cache mode "no-store". `URLSession` stores a completed `GET`
+/// response in the session's `URLCache` even when the request ignores cached data, so an event
+/// stream (which can contain anything the server pushed) would end up in the cache.
+final class NoStoreDelegate: NSObject, URLSessionDataDelegate, Sendable {
+    func urlSession(
+        _ session: URLSession,
+        dataTask: URLSessionDataTask,
+        willCacheResponse proposedResponse: CachedURLResponse,
+        completionHandler: @escaping @Sendable (CachedURLResponse?) -> Void
+    ) {
+        completionHandler(nil)
     }
 }
 #endif
@@ -54,7 +71,7 @@ struct URLSessionDelegateTransport: EventStreamTransport {
 ///
 /// The response head resumes the continuation passed to ``start(_:)``; body chunks are yielded
 /// to ``body``; completion finishes ``body`` and invalidates the session, which releases this
-/// delegate.
+/// delegate. Responses are never stored in the session's cache.
 final class StreamingDataDelegate: NSObject, URLSessionDataDelegate, @unchecked Sendable {
     /// The response body.
     ///
@@ -96,6 +113,16 @@ final class StreamingDataDelegate: NSObject, URLSessionDataDelegate, @unchecked 
 
     func urlSession(_ session: URLSession, dataTask: URLSessionDataTask, didReceive data: Data) {
         bodyContinuation.yield(data)
+    }
+
+    func urlSession(
+        _ session: URLSession,
+        dataTask: URLSessionDataTask,
+        willCacheResponse proposedResponse: CachedURLResponse,
+        completionHandler: @escaping @Sendable (CachedURLResponse?) -> Void
+    ) {
+        // Section 9.2.2 fetches with the cache mode "no-store".
+        completionHandler(nil)
     }
 
     func urlSession(

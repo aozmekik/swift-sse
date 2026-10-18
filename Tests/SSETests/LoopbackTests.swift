@@ -77,4 +77,70 @@ struct LoopbackTests {
         #expect(events.map(\.lastEventID) == [id, id, id])
         #expect(received.withLock { $0 } == [nil, Array(id.utf8), Array(id.utf8)])
     }
+
+    @Test(
+        "Requests carry Accept and no-cache headers (web-platform-tests request-cache-control)",
+        arguments: Transport.allCases
+    )
+    func requestHeadersOnTheWire(transport: Transport) async throws {
+        let heads = LockedState<[LoopbackRequestHead]>([])
+        let server = try LoopbackServer { connection in
+            guard let head = connection.readRequestHead() else { return }
+            heads.withLock { $0.append(head) }
+            connection.writeEventStreamHead()
+            connection.write("data: x\n\n")
+        }
+        defer { server.stop() }
+
+        let events = source(server.url(), transport, reconnection: .disabled)
+        let (received, error) = await collect(events)
+
+        #expect(error == nil)
+        #expect(received.map(\.data) == ["x"])
+        let first = heads.withLock { $0.first }
+        let head = try #require(first)
+        #expect(head.value(of: "Accept") == Array("text/event-stream".utf8))
+        #expect(head.value(of: "Cache-Control") == Array("no-cache".utf8))
+        #expect(head.value(of: "Pragma") == Array("no-cache".utf8))
+        #expect(head.value(of: "Last-Event-ID") == nil)
+    }
+
+    @Test(
+        "Responses are not stored in the session's URL cache, whatever the request's headers",
+        arguments: Transport.allCases
+    )
+    func responsesAreNotCached(transport: Transport) async throws {
+        let body = "data: cached?\n\n"
+        let server = try LoopbackServer { connection in
+            guard connection.readRequestHead() != nil else { return }
+            // A complete, cacheable response: without the no-store delegate, URLSession stores it.
+            connection.write(
+                "HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\n"
+                    + "Content-Length: \(body.utf8.count)\r\n\r\n\(body)")
+        }
+        defer { server.stop() }
+        let cache = URLCache(memoryCapacity: 1 << 20, diskCapacity: 0)
+        let configuration = URLSessionConfiguration.default
+        configuration.urlCache = cache
+        // The default `Cache-Control: no-cache` already keeps URLSession from storing the
+        // response; a caller's own header must not bring storage back.
+        var request = URLRequest(url: server.url())
+        request.setValue("max-age=0", forHTTPHeaderField: "Cache-Control")
+        let source = EventSource(
+            request: request,
+            reconnection: .disabled,
+            lastEventID: "",
+            environment: .init(
+                transport: transport.make(URLSession(configuration: configuration)),
+                sleep: { _ in },
+                random: { 0 }
+            )
+        )
+
+        let (events, error) = await collect(source)
+
+        #expect(error == nil)
+        #expect(events.map(\.data) == ["cached?"])
+        #expect(cache.cachedResponse(for: URLRequest(url: server.url())) == nil)
+    }
 }
