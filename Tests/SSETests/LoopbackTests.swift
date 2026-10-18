@@ -180,7 +180,9 @@ struct LoopbackTests {
             connection.writeEventStreamHead()
             let padding = String(repeating: "x", count: 1_000)
             var id = 0
-            while true {
+            // Capped at about 64 MiB, twice the bound checked below, so a transport without flow
+            // control cannot exhaust the machine's memory.
+            while id < 65_536 {
                 var block = ""
                 for _ in 0..<64 {
                     id += 1

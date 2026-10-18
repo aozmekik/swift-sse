@@ -264,8 +264,7 @@ fixture server for running them over real HTTP without an API key.
   performs the I/O, so there is no background task and no reconnection unless the consumer asks
   for another event. On Apple platforms buffering is bounded: `URLSession.bytes` has its own
   read-ahead, so a slow consumer slows the server down through TCP. The `URLSessionDataDelegate`
-  bridge used on Linux suspends the request above 1 MiB of unread data, but swift-corelibs-foundation
-  does not reliably stop reading on `suspend()` (see [Limitations](#limitations)). The trade-off: no `readyState`/`onerror`
+  bridge used on Linux has no flow control (see [Limitations](#limitations)). The trade-off: no `readyState`/`onerror`
   observation, and each iterator opens its own connection.
 - **Byte-level parsing** ([ADR 0003](docs/adr/0003-byte-level-parser.md)): field names are
   matched as bytes and only kept values are decoded as UTF-8. Chunking cannot change the result.
@@ -355,11 +354,13 @@ The accumulators take a constant time per delta: 273 to 283 ns (OpenAI) and 177 
   integers exact within the range of `Int64`; larger integers become `Double`s.
 - Development and every measurement above used Swift 6.3.2 on macOS. The manifest declares Swift
   6.0 as the minimum, and the Linux CI job builds and tests with Swift 6.0, 6.3 and 6.4.
-- **Flow control on Linux is not reliable.** The delegate bridge calls `URLSessionTask.suspend()`
-  above 1 MiB of unread data, but swift-corelibs-foundation keeps reading from the socket. In the
-  back-pressure test on GitHub's Ubuntu runners, the server still wrote 44 MB (Swift 6.3), 658 MB
-  (Swift 6.4) and 2.2 GB (Swift 6.0) while the consumer paused for one second. On Linux, keep
-  consuming the stream promptly. The test records this as a known issue rather than hiding it.
+- **No flow control on Linux.** An earlier version suspended the `URLSessionTask` above 1 MiB of
+  unread data, but swift-corelibs-foundation kept reading from the socket: in the back-pressure
+  test on GitHub's Ubuntu runners the server still wrote 44 MB (Swift 6.3), 658 MB (Swift 6.4) and
+  2.2 GB (Swift 6.0) during a one-second consumer pause. With Swift 6.4, resuming the task also
+  restarted the transfer and replayed the stream from its first event. The Linux bridge therefore
+  never suspends: every event arrives once and in order, but unread data is buffered in memory, so
+  keep consuming the stream promptly. The test records the missing bound as a known issue.
 
 ## Roadmap
 

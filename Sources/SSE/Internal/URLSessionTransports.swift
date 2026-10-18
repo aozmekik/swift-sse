@@ -80,8 +80,19 @@ struct URLSessionDelegateTransport: EventStreamTransport {
 /// flow control: when more than ``highWaterMark`` bytes have been received but not consumed
 /// (see ``didConsume(_:)``), it suspends the task, which stops reading from the socket and lets
 /// TCP flow control slow the server down; it resumes the task once the reader has drained the
-/// buffer to ``lowWaterMark``.
+/// buffer to ``lowWaterMark``. On Linux it does not (see ``suspendsTasks``).
 final class StreamingDataDelegate: NSObject, URLSessionDataDelegate, Sendable {
+    /// Whether the delegate suspends the task when the buffer is full.
+    ///
+    /// Off on Linux: swift-corelibs-foundation keeps reading after `suspend()`, so it does not
+    /// bound the buffer, and with Swift 6.4 a later `resume()` restarted the transfer, replaying
+    /// the stream from its first event. Delivering every event once matters more than the bound.
+    #if canImport(FoundationNetworking)
+    static let suspendsTasks = false
+    #else
+    static let suspendsTasks = true
+    #endif
+
     /// The buffered byte count above which the task is suspended.
     static let highWaterMark = 1 << 20
     /// The buffered byte count at or below which a suspended task is resumed.
@@ -151,7 +162,8 @@ final class StreamingDataDelegate: NSObject, URLSessionDataDelegate, Sendable {
     func urlSession(_ session: URLSession, dataTask: URLSessionDataTask, didReceive data: Data) {
         flowControl.withLock { flow in
             flow.bufferedBytes += data.count
-            guard !flow.isSuspended, flow.bufferedBytes > Self.highWaterMark else { return }
+            guard Self.suspendsTasks, !flow.isSuspended, flow.bufferedBytes > Self.highWaterMark
+            else { return }
             flow.isSuspended = true
             taskControl.async { dataTask.suspend() }
         }

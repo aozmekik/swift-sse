@@ -11,8 +11,9 @@ contain breaking changes.
 
 ### Known issues
 
-- On Linux, swift-corelibs-foundation keeps reading after `URLSessionTask.suspend()`, so a slow
-  consumer does not slow the server down and unread data can pile up in memory. Apple platforms
+- No flow control on Linux: swift-corelibs-foundation keeps reading after
+  `URLSessionTask.suspend()`, and with Swift 6.4 resuming the task replayed the stream, so the
+  Linux bridge never suspends and a slow consumer's unread data piles up in memory. Apple platforms
   use `URLSession.bytes` and are not affected.
 
 ### Added
