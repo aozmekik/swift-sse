@@ -69,6 +69,9 @@ public struct EventSource: AsyncSequence, Sendable {
     public let reconnectionPolicy: ReconnectionPolicy
 
     /// The last event ID string that the first connection starts from.
+    ///
+    /// This is the `lastEventID` argument, or the request's own `Last-Event-ID` header when that
+    /// argument is empty.
     public let initialLastEventID: String
 
     let environment: Environment
@@ -76,8 +79,12 @@ public struct EventSource: AsyncSequence, Sendable {
     /// Creates an event source for a request.
     ///
     /// - Parameters:
-    ///   - request: The request to send for every connection. Its method, body and headers are
-    ///     sent as is.
+    ///   - request: The request to send for every connection. Its URL, method, body and headers
+    ///     are sent as they are, with three changes: `Accept: text/event-stream`,
+    ///     `Cache-Control: no-cache` and `Pragma: no-cache` are added unless the request has
+    ///     those headers; `Last-Event-ID` is set to the stream's last event ID string, or
+    ///     removed while that string is empty; and the cache policy is
+    ///     `.reloadIgnoringLocalCacheData`.
     ///   - session: The URL session to use. Defaults to `URLSession.shared`. Configure idle
     ///     timeouts through `request.timeoutInterval` or the session configuration: a stream that
     ///     is silent for longer than the timeout fails with `URLError.timedOut`, which counts as a
@@ -86,7 +93,8 @@ public struct EventSource: AsyncSequence, Sendable {
     ///   - reconnection: The reconnection policy, or `nil` (the default) to reconnect `GET`
     ///     requests with ``ReconnectionPolicy/default`` and never reconnect other methods.
     ///   - lastEventID: The initial last event ID string, for resuming a stream across app
-    ///     launches. Defaults to the empty string (no `Last-Event-ID` header).
+    ///     launches. Defaults to the empty string, which uses the request's own `Last-Event-ID`
+    ///     header if it has one and otherwise sends none.
     public init(
         request: URLRequest,
         session: URLSession = .shared,
@@ -130,7 +138,9 @@ public struct EventSource: AsyncSequence, Sendable {
     ) {
         self.request = request
         self.reconnectionPolicy = reconnection ?? Self.defaultPolicy(for: request)
-        self.initialLastEventID = lastEventID
+        self.initialLastEventID =
+            lastEventID.isEmpty
+            ? request.value(forHTTPHeaderField: "Last-Event-ID") ?? "" : lastEventID
         self.environment = environment
     }
 

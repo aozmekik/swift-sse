@@ -69,6 +69,27 @@ struct EventSourceTests {
         #expect(events.first?.lastEventID == "41")
     }
 
+    @Test("A Last-Event-ID header on the request is the initial last event ID")
+    func lastEventIDFromRequestHeader() async throws {
+        var request = URLRequest(url: testURL)
+        request.setValue("42", forHTTPHeaderField: "Last-Event-ID")
+        let transport = StubTransport([.stream("data: x\n\n")])
+        let source = EventSource(
+            request: request,
+            reconnection: .disabled,
+            lastEventID: "",
+            environment: .init(transport: transport, sleep: { _ in }, random: { 0 })
+        )
+        let (events, _) = await collect(source)
+
+        #expect(source.initialLastEventID == "42")
+        #expect(transport.requests.first?.sentLastEventID == "42")
+        #expect(events.first?.lastEventID == "42")
+
+        let explicit = EventSource(request: request, lastEventID: "43")
+        #expect(explicit.initialLastEventID == "43")
+    }
+
     // MARK: Reconnection
 
     @Test("After the stream ends, it reconnects with Last-Event-ID after the server's retry time")
