@@ -288,9 +288,11 @@ swift test
   run both `URLSession` transports on Apple platforms.
 - The suite also passes under `swift test --sanitize=thread` and `--sanitize=address` (same
   machine and toolchain).
-- Line coverage of `Sources/`: 97.7% (SSE 98.0%, SSELLM 97.4%), from
-  `swift test --enable-code-coverage` and `xcrun llvm-cov report` on the machine above. It covers
-  the code compiled on macOS; the Linux-only lines are a few `#if` branches.
+- Line coverage of `Sources/`: 97.6% (SSE 97.8%, SSELLM 97.4%), on the machine above, from
+  `swift test --enable-code-coverage` and then
+  `xcrun llvm-cov report .build/debug/swift-ssePackageTests.xctest/Contents/MacOS/swift-ssePackageTests -instr-profile .build/debug/codecov/default.profdata Sources`
+  (`Sources/SSE` or `Sources/SSELLM` for one module). It covers the code compiled on macOS; the
+  Linux-only lines are a few `#if` branches.
 - Linux runs the same suites except the `URLProtocol`-backed ones, which are Apple-only.
 
 ## Benchmarks
@@ -307,21 +309,23 @@ Apple M1 Pro (8 cores, 16 GB), macOS 26.6.2, Swift 6.3.2, release build, 64 MiB 
 
 | Workload | Chunk size | MiB/s | Million events/s |
 |---|---:|---:|---:|
-| `llm-chunks`: OpenAI-style chunk events, ~180 B each | 64 B | 500 (499-502) | 2.90 |
-| | 1 KiB | 686 (678-693) | 3.97 |
-| | 16 KiB | 882 (861-892) | 5.11 |
-| `multi-line`: id, event, 8 data lines of 72 B, CRLF | 64 B | 589 (584-592) | 0.92 |
-| | 1 KiB | 982 (971-988) | 1.54 |
-| | 16 KiB | 1145 (1141-1154) | 1.80 |
-| `tiny`: `data: x` events | 64 B | 82 (82-83) | 9.57 |
-| | 1 KiB | 120 (113-126) | 13.94 |
-| | 16 KiB | 129 (118-132) | 14.97 |
+| `llm-chunks`: OpenAI-style chunk events, ~180 B each | 64 B | 464 (399-511) | 2.69 |
+| | 1 KiB | 691 (381-695) | 4.00 |
+| | 16 KiB | 777 (726-871) | 4.50 |
+| `multi-line`: id, event, 8 data lines of 72 B, CRLF | 64 B | 586 (578-591) | 0.92 |
+| | 1 KiB | 993 (983-998) | 1.56 |
+| | 16 KiB | 1143 (1133-1159) | 1.79 |
+| `tiny`: `data: x` events | 64 B | 82 (78-83) | 9.57 |
+| | 1 KiB | 125 (123-130) | 14.62 |
+| | 16 KiB | 116 (34-134) | 13.57 |
 
-These numbers are noisy: the machine was shared with other heavy jobs (load average about 26 on
-8 cores during the run), and a second run minutes later measured as little as 417 MiB/s for
-`multi-line` at 16 KiB. Treat them as an order of magnitude: hundreds of MiB per second, far above
-what an LLM or event stream delivers over a network, so parsing is not the bottleneck. The client
-path (`URLSession.AsyncBytes`, one byte per `await`) is not benchmarked.
+These numbers are noisy: the machine was shared with other heavy build jobs. The run above
+started at a one-minute load average of about 15 on 8 cores; an earlier run in the same hour, at a
+load average of about 80, measured between 42% and 61% of these medians (for example 681 MiB/s
+for `multi-line` at 16 KiB), and the wide ranges of some rows (`tiny` at 16 KiB) come from the same interference.
+Treat the figures as an order of magnitude: hundreds of MiB per second, far above what an LLM or
+event stream delivers over a network, so parsing is not the bottleneck. The client path
+(`URLSession.AsyncBytes`, one byte per `await`) is not benchmarked.
 
 ## Limitations
 
