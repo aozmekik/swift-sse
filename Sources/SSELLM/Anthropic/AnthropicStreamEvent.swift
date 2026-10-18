@@ -7,7 +7,7 @@ import SSE
 /// `content_block_delta` events and a `content_block_stop`, then one or more `message_delta`
 /// events and a final `message_stop`. `ping` events may appear anywhere, and `error` events report
 /// failures such as `overloaded_error` after the HTTP response has started. See
-/// <https://docs.claude.com/en/docs/build-with-claude/streaming>.
+/// <https://platform.claude.com/docs/en/build-with-claude/streaming>.
 ///
 /// Event, block and delta types that this package does not model decode as ``unknown(type:payload:)``,
 /// ``ContentBlock/other(type:payload:)`` and ``Delta/other(type:payload:)`` with their full JSON,

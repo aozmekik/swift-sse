@@ -7,7 +7,7 @@ import Foundation
 /// for try await event in EventSource(request: request).anthropicStreamEvents() {
 ///     try message.add(event)
 /// }
-/// print(message.text, message.stopReason ?? "")
+/// print(message.text, message.stopReason?.rawValue ?? "none")
 /// ```
 ///
 /// Deltas for a block index that has not been started are ignored; the API always starts a block

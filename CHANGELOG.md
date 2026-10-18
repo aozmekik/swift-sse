@@ -14,17 +14,22 @@ contain breaking changes.
 - `EventStreamParser`: an incremental, byte-level parser for `text/event-stream` implementing
   WHATWG HTML Living Standard sections 9.2.5 and 9.2.6.
 - `EventSource`: a pull-based `AsyncSequence` client over `URLRequest`, using
-  `URLSession.bytes(for:)` on Apple platforms and a `URLSessionDataDelegate` bridge on Linux,
-  with status and `Content-Type` validation, `Last-Event-ID`, and cancellation.
+  `URLSession.bytes(for:)` on Apple platforms and a `URLSessionDataDelegate` bridge with flow
+  control on Linux, with status and `Content-Type` validation, cancellation, the `Accept`,
+  `Cache-Control` and `Pragma` request headers of the standard's "no-store" fetch, and
+  `Last-Event-ID` sent as UTF-8 bytes (also through CFNetwork, which writes ISO-8859-1).
 - `ReconnectionPolicy`: the server's `retry` time as a floor, capped exponential backoff with
   jitter, an optional attempt limit, and `.disabled`; non-`GET` requests do not reconnect by
-  default.
-- `EventSourceError` with the response and the start of the body for HTTP failures.
+  default, a connection that delivers any data resets the backoff, and errors that no
+  reconnection can fix are not retried.
+- `EventSourceError` with the response and the start of the body (at most 64 KiB, read for at
+  most one second) for HTTP failures.
 - `SSELLM`: decoders, `AsyncSequence` adapters and accumulators for OpenAI-compatible Chat
-  Completions streams and Anthropic Messages streams; `LLMStreamError`, `ProviderError` and
-  `JSONValue`.
-- Examples (`assemble-text`, `sse-tail`, `serve-fixture.py`), a parser benchmark, DocC
-  catalogs, ADRs and CI for macOS and Linux.
+  Completions streams (including servers that omit tool call indices) and Anthropic Messages
+  streams; `LLMStreamError`, `ProviderError` and `JSONValue` (exact `Int64` integers).
+- Examples (`assemble-text`, `sse-tail`, `serve-fixture.py`), a parser and accumulator
+  benchmark, DocC catalogs, ADRs, and CI for macOS, Linux and builds for iOS, tvOS, watchOS and
+  visionOS.
 
-[Unreleased]: https://github.com/aozmekik/swift-sse/compare/v0.1.0...HEAD
-[0.1.0]: https://github.com/aozmekik/swift-sse/releases/tag/v0.1.0
+[Unreleased]: https://github.com/aozmekik/swift-sse/compare/0.1.0...HEAD
+[0.1.0]: https://github.com/aozmekik/swift-sse/releases/tag/0.1.0

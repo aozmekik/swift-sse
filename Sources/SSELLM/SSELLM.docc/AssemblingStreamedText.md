@@ -33,6 +33,10 @@ for call in completion.choices.first?.toolCalls ?? [] {
 The sequence ends at `data: [DONE]`. If the server closes the connection before that, iteration
 throws ``LLMStreamError/truncated``, so a cut-off answer is never mistaken for a complete one.
 
+Tool call fragments are grouped by their `index`. Some OpenAI-compatible servers leave it out;
+the accumulator then keeps calls apart by their IDs and by their position within a chunk, so
+parallel calls are not merged.
+
 ### Anthropic Messages
 
 ```swift

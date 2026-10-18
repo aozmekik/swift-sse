@@ -34,11 +34,13 @@ streaming formats.
   with U+FFFD. Pure value type, usable with any byte source.
 - **Client** (`EventSource`, section 9.2.3): an `AsyncSequence` over a `URLRequest` (any method,
   headers and body), `URLSession.bytes(for:)` on Apple platforms and a FoundationNetworking path on
-  Linux, `Accept` and `Last-Event-ID` headers, HTTP status and `Content-Type` validation with typed
-  errors that carry the error body, `204 No Content` as a clean stop.
+  Linux, the request headers of the standard's fetch (`Accept`, `Cache-Control`/`Pragma:
+  no-cache`, `Last-Event-ID` as UTF-8), HTTP status and `Content-Type` validation with typed
+  errors that carry the error body, `204 No Content` as a clean stop, and bounded buffering.
 - **Reconnection** (`ReconnectionPolicy`): the server's `retry:` as a floor, capped exponential
   backoff with jitter after consecutive failures, an optional attempt limit, and `.disabled` for
-  streams that must not be replayed. Non-`GET` requests do not reconnect unless you ask.
+  streams that must not be replayed. Non-`GET` requests do not reconnect unless you ask, and errors
+  that no reconnection can fix fail at once.
 - **Cancellation**: cancelling the iterating task, or breaking out of the loop, cancels the HTTP
   request. No unstructured tasks inside.
 - **LLM helpers** (`SSELLM`, a separate library product): typed decoding of OpenAI-compatible
@@ -67,7 +69,8 @@ targets: [
 In Xcode: File > Add Package Dependencies, then enter `https://github.com/aozmekik/swift-sse`.
 
 Requirements: Swift 6.0 or later; iOS 16, macOS 13, tvOS 16, watchOS 9, visionOS 1, or Linux with
-FoundationNetworking.
+FoundationNetworking. CI compiles the libraries for each of these Apple platforms and runs the
+tests on macOS and Linux.
 
 ## Quick start
 
@@ -101,7 +104,7 @@ for try await chunk in EventSource(request: request).openAIChatCompletionChunks(
     print(chunk.textDelta ?? "", terminator: "")
     completion.add(chunk)
 }
-print("\n", completion.choices.first?.finishReason ?? "none")
+print("\n", completion.choices.first?.finishReason?.rawValue ?? "none")
 ```
 
 Anthropic's Messages API works the same way:
@@ -212,6 +215,7 @@ do {
 | any other status | `EventSourceError.unexpectedStatusCode` with the response and the start of the body (up to 64 KiB, read for at most 1 s), not retried |
 | 200 with another content type | `EventSourceError.unexpectedContentType`, likewise, not retried |
 | network error or end of stream | reconnect per policy; with `.disabled`, `connectionFailed` or the end of the sequence |
+| error that no reconnection can fix | `EventSourceError.connectionFailed`, whatever the policy |
 | attempt limit reached | `EventSourceError.reconnectionLimitReached` |
 | task cancelled | `CancellationError`, request cancelled |
 
@@ -256,8 +260,10 @@ fixture server for running them over real HTTP without an API key.
 ## Design notes and trade-offs
 
 - **Pull-based iteration** ([ADR 0001](docs/adr/0001-pull-based-async-sequence.md)): `next()`
-  performs the I/O, so there is no background task, no unbounded buffer, and no reconnection
-  unless the consumer asks for another event. The trade-off: no `readyState`/`onerror`
+  performs the I/O, so there is no background task and no reconnection unless the consumer asks
+  for another event. Buffering is bounded: `URLSession.bytes` has its own read-ahead, and the
+  `URLSessionDataDelegate` bridge used on Linux suspends the request above 1 MiB of unread data,
+  so a slow consumer slows the server down through TCP. The trade-off: no `readyState`/`onerror`
   observation, and each iterator opens its own connection.
 - **Byte-level parsing** ([ADR 0003](docs/adr/0003-byte-level-parser.md)): field names are
   matched as bytes and only kept values are decoded as UTF-8. Chunking cannot change the result.
@@ -266,10 +272,15 @@ fixture server for running them over real HTTP without an API key.
   never subtracted.
 - **Safe defaults for `POST`** ([ADR 0004](docs/adr/0004-reconnect-only-get-by-default.md)):
   replaying an LLM request would bill a new generation.
+- **On the wire**: CFNetwork writes header values as ISO-8859-1 and truncates them at the first
+  other character, so on Apple platforms the client spells the UTF-8 bytes of `Last-Event-ID` as
+  ISO-8859-1 characters; a loopback test modeled on web-platform-tests `format-field-id-2` checks
+  the raw bytes. Requests carry `Cache-Control: no-cache` and `Pragma: no-cache`, as Fetch's
+  "no-store" mode adds them, and responses are kept out of the session's `URLCache`.
 - **Behaviour choices beyond the standard**: the last event ID persists across reconnections
-  (as browsers do and web-platform-tests `format-field-id-2` requires); `204` ends the sequence
-  without an error; HTTP status errors include the start of the body because LLM APIs explain
-  failures there; the `Accept` header is only set when the request has none.
+  (as browsers do); a `Last-Event-ID` header on your request is the initial ID; `204` ends the
+  sequence without an error; HTTP status errors include the start of the body because LLM APIs
+  explain failures there; the `Accept` header is only set when the request has none.
 - **Linux**: FoundationNetworking has no `URLSession.bytes(for:)`, so Linux uses a
   `URLSessionDataDelegate` bridge built from your session's configuration (its delegate is not
   used). The same bridge is exercised on macOS by the test suite.
@@ -280,8 +291,10 @@ fixture server for running them over real HTTP without an API key.
 swift test
 ```
 
-- 133 tests in 11 suites (Swift Testing's count; a parameterized test counts once), measured with
-  `swift test` on an Apple M1 Pro (16 GB), macOS 26.6.2, Swift 6.3.2 (Xcode 26.5).
+Measured on an Apple M1 Pro (16 GB), macOS 26.6.2, Swift 6.3.2 (Xcode 26.5):
+
+- 153 tests in 12 suites (Swift Testing's count; a parameterized test counts once), all passing
+  with `swift test`, `swift test --sanitize=thread` and `swift test --sanitize=address`.
 - Parser conformance: every example of section 9.2.6 and the streams of the web-platform-tests
   `eventsource/format-*` files; every single and every pair of split points of the fixtures;
   byte-at-a-time feeding; 2,000 seeded random streams checked against a naive reference parser
@@ -289,70 +302,66 @@ swift test
 - Client: reconnection, backoff, validation and cancellation with a scripted transport and an
   injected sleeper and random source (no test waits for real time); `URLProtocol`-backed tests that
   run both `URLSession` transports on Apple platforms.
-- The suite also passes under `swift test --sanitize=thread` and `--sanitize=address` (same
-  machine and toolchain).
-- Line coverage of `Sources/`: 97.6% (SSE 97.8%, SSELLM 97.4%), on the machine above, from
-  `swift test --enable-code-coverage` and then
-  `xcrun llvm-cov report .build/debug/swift-ssePackageTests.xctest/Contents/MacOS/swift-ssePackageTests -instr-profile .build/debug/codecov/default.profdata Sources`
-  (`Sources/SSE` or `Sources/SSELLM` for one module). It covers the code compiled on macOS; the
-  Linux-only lines are a few `#if` branches.
-- Linux runs the same suites except the `URLProtocol`-backed ones, which are Apple-only.
+- Loopback: both transports against a minimal HTTP server on `127.0.0.1`, for what only the wire
+  shows: the `Last-Event-ID` bytes, the request headers, cache storage, flow control (in one run,
+  a consumer paused for a second let the server write about 2.4 MiB through the delegate bridge,
+  and 1.3 GiB with flow control disabled) and prompt error reporting. The suite is written to run
+  on Linux as well, but has only run on macOS so far.
+- Line coverage of `Sources/`: 98.1% (SSE 98.4%, SSELLM 97.7%), from
+  `swift test --enable-code-coverage` and `xcrun llvm-cov report` (the full command is in
+  [CONTRIBUTING.md](CONTRIBUTING.md)). It covers the code compiled on macOS.
 
 ## Benchmarks
 
-Parser throughput on synthetic streams generated in memory (no I/O, no networking, no JSON
-decoding), median of 7 runs after one warm-up, `(min-max)` across runs:
+`swift run -c release sse-benchmark` on the same machine (release build, 7 runs after one warm-up,
+median), while other build jobs were running (load average about 35 on 8 cores), so treat the
+figures as orders of magnitude. Methodology, ranges and the accumulator table:
+[docs/benchmarks.md](docs/benchmarks.md).
 
-```sh
-swift run -c release sse-benchmark
-```
-
-Apple M1 Pro (8 cores, 16 GB), macOS 26.6.2, Swift 6.3.2, release build, 64 MiB per workload
-(16 MiB for `tiny`):
-
-| Workload | Chunk size | MiB/s | Million events/s |
+| Parser workload (synthetic, in memory) | 64 B chunks | 1 KiB chunks | 16 KiB chunks |
 |---|---:|---:|---:|
-| `llm-chunks`: OpenAI-style chunk events, ~180 B each | 64 B | 464 (399-511) | 2.69 |
-| | 1 KiB | 691 (381-695) | 4.00 |
-| | 16 KiB | 777 (726-871) | 4.50 |
-| `multi-line`: id, event, 8 data lines of 72 B, CRLF | 64 B | 586 (578-591) | 0.92 |
-| | 1 KiB | 993 (983-998) | 1.56 |
-| | 16 KiB | 1143 (1133-1159) | 1.79 |
-| `tiny`: `data: x` events | 64 B | 82 (78-83) | 9.57 |
-| | 1 KiB | 125 (123-130) | 14.62 |
-| | 16 KiB | 116 (34-134) | 13.57 |
+| `llm-chunks`: OpenAI-style chunk events, ~180 B each | 512 MiB/s | 714 MiB/s | 905 MiB/s |
+| `multi-line`: id, event, 8 data lines of 72 B, CRLF | 592 MiB/s | 960 MiB/s | 1057 MiB/s |
+| `tiny`: `data: x` events | 81 MiB/s | 117 MiB/s | 117 MiB/s |
 
-These numbers are noisy: the machine was shared with other heavy build jobs. The run above
-started at a one-minute load average of about 15 on 8 cores; an earlier run in the same hour, at a
-load average of about 80, measured between 42% and 61% of these medians (for example 681 MiB/s
-for `multi-line` at 16 KiB), and the wide ranges of some rows (`tiny` at 16 KiB) come from the same interference.
-Treat the figures as an order of magnitude: hundreds of MiB per second, far above what an LLM or
-event stream delivers over a network, so parsing is not the bottleneck. The client path
-(`URLSession.AsyncBytes`, one byte per `await`) is not benchmarked.
+The accumulators take a constant time per delta: 273 to 283 ns (OpenAI) and 177 to 186 ns
+(Anthropic) from 5,000 to 80,000 four-byte text deltas.
 
 ## Limitations
 
 - No limit on the size of a single event or line: a server that never sends a line terminator
   makes the parser buffer without bound. Use it with servers you trust, or put a byte limit in
   your own transport.
-- No `readyState`, `open` or `error` notifications while the client reconnects; reconnection is
-  only visible through the delays and the `Last-Event-ID` the server receives.
+- No `readyState`, `open` or `error` notifications while the client reconnects, and no access to
+  the `HTTPURLResponse` of a successful stream (request IDs, rate-limit headers); responses are
+  only available inside the errors.
+- Not asking for events for longer than the request's timeout interval can end the connection
+  with `URLError.timedOut` (observed with `URLSession.bytes` on macOS), which counts as a network
+  error.
+- For `text/plain` responses, CFNetwork holds the response head back until 512 bytes or the end
+  of the body have arrived (content sniffing), so a slowly streamed `text/plain` error is reported
+  only then.
 - On Linux, the `URLSession` delegate of the session you pass is not used (only its
   configuration), and FoundationNetworking's HTTP stack has its own limits.
 - Status codes such as `429` and `503` are not retried, as the standard requires; `Retry-After` is
   available on the error for your own retry logic.
 - `SSELLM` decodes responses only: it does not build requests or know model names, and it was
   tested against synthetic streams written from the providers' documentation, not against live
-  APIs. Provider-specific extensions (for example `reasoning_content` fields of some
-  OpenAI-compatible servers) are not modelled.
+  APIs. Tool calls without an `index` are handled as forum reports describe Gemini's and
+  SambaNova's OpenAI-compatible endpoints, also only with synthetic chunks. Provider-specific
+  extensions (for example `reasoning_content` fields) are not modelled. `JSONValue` keeps
+  integers exact within the range of `Int64`; larger integers become `Double`s.
 - Development and every measurement above used Swift 6.3.2 on macOS. The manifest declares Swift
   6.0 as the minimum, and the Linux CI job builds and tests with Swift 6.0, 6.3 and 6.4, but at the
-  time of writing that job had not run yet: Linux support is implemented, not yet verified.
+  time of writing that job had not run yet: Linux support is implemented, not yet verified. The
+  Linux flow control relies on `URLSessionTask.suspend()` removing the transfer from libcurl, as
+  the swift-corelibs-foundation source does; it has been measured only on macOS.
 
 ## Roadmap
 
 - An optional per-event size limit with a typed error.
-- Reconnection observation (attempt number, delay, error) for status UI.
+- An observation hook for status UI and diagnostics: the response of each connection, reconnection
+  attempts, delays and errors.
 - A pluggable transport for other HTTP clients, such as AsyncHTTPClient on Linux.
 - Optional retry of `429`/`503` honoring `Retry-After`.
 - Publishing to the Swift Package Index once the API settles.
@@ -366,12 +375,15 @@ Issues and pull requests are welcome; please include a test that fails without y
 
 - WHATWG, [HTML Living Standard, section 9.2 "Server-sent events"](https://html.spec.whatwg.org/multipage/server-sent-events.html):
   9.2.3 Processing model, 9.2.4 The `Last-Event-ID` header, 9.2.5 Parsing an event stream,
-  9.2.6 Interpreting an event stream.
+  9.2.6 Interpreting an event stream, 9.2.7 Authoring notes.
+- WHATWG, [Fetch Standard](https://fetch.spec.whatwg.org/): the `Cache-Control` and `Pragma`
+  headers of the "no-store" cache mode (HTTP-network-or-cache fetch).
 - WHATWG, [Encoding Standard, UTF-8 decode](https://encoding.spec.whatwg.org/#utf-8-decode).
 - [web-platform-tests `eventsource/`](https://github.com/web-platform-tests/wpt/tree/master/eventsource):
-  the source of the `format-*` conformance cases reproduced in the tests.
+  the source of the `format-*` conformance cases reproduced in the tests, and of the
+  `format-field-id-2` and `request-cache-control` behaviour that the loopback tests check.
 - OpenAI, [Chat Completions streaming](https://platform.openai.com/docs/api-reference/chat-streaming).
-- Anthropic, [Streaming Messages](https://docs.claude.com/en/docs/build-with-claude/streaming).
+- Anthropic, [Streaming Messages](https://platform.claude.com/docs/en/build-with-claude/streaming).
 - Marc Brooker, [Exponential Backoff And Jitter](https://aws.amazon.com/blogs/architecture/exponential-backoff-and-jitter/),
   AWS Architecture Blog, 2015.
 - G. L. Steele Jr., D. Lea, C. H. Flood, "Fast splittable pseudorandom number generators",

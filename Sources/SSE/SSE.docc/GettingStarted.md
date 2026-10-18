@@ -76,9 +76,10 @@ struct LiveFeed: View {
 
 Iteration throws an ``EventSourceError`` when the server answers with a status other than 200
 (the error carries the response and the start of its body, which for LLM APIs usually explains the
-problem), when the content type is not `text/event-stream`, or when the connection fails and the
-policy does not reconnect. A `204 No Content` response ends the sequence normally. Cancelling the
-task throws `CancellationError`.
+problem), when the content type is not `text/event-stream`, when the connection fails and the
+policy does not reconnect, or when it fails in a way that no reconnection can fix, such as an
+unsupported URL or an untrusted certificate. A `204 No Content` response ends the sequence
+normally. Cancelling the task throws `CancellationError`.
 
 ```swift
 do {
