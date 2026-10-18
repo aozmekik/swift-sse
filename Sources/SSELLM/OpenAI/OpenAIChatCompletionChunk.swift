@@ -116,7 +116,10 @@ public struct OpenAIChatCompletionChunk: Sendable, Hashable {
     public struct ToolCallDelta: Sendable, Hashable {
         /// The position of the tool call in the message; fragments with the same index belong to
         /// the same call.
-        public var index: Int
+        ///
+        /// `nil` when the server omits the field, as some OpenAI-compatible servers do;
+        /// ``OpenAIChatCompletionAccumulator`` then infers which call a fragment belongs to.
+        public var index: Int?
         /// The tool call ID, usually sent only in the call's first fragment.
         public var id: String?
         /// The tool type, `function` for OpenAI.
@@ -127,12 +130,12 @@ public struct OpenAIChatCompletionChunk: Sendable, Hashable {
         /// Creates a tool call fragment.
         ///
         /// - Parameters:
-        ///   - index: The position of the call.
+        ///   - index: The position of the call, or `nil` if the server did not send one.
         ///   - id: The tool call ID. Defaults to `nil`.
         ///   - type: The tool type. Defaults to `nil`.
         ///   - function: The function fragment. Defaults to `nil`.
         public init(
-            index: Int,
+            index: Int?,
             id: String? = nil,
             type: String? = nil,
             function: FunctionDelta? = nil
@@ -310,13 +313,13 @@ extension OpenAIChatCompletionChunk.ToolCallDelta: Decodable {
         case function
     }
 
-    /// Decodes a tool call fragment; a missing `index` is 0.
+    /// Decodes a tool call fragment; a missing `index` is `nil`.
     ///
     /// - Parameter decoder: The decoder to read from.
     /// - Throws: `DecodingError` if a present field has the wrong type.
     public init(from decoder: any Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
-        index = try container.decodeIfPresent(Int.self, forKey: .index) ?? 0
+        index = try container.decodeIfPresent(Int.self, forKey: .index)
         id = try container.decodeIfPresent(String.self, forKey: .id)
         type = try container.decodeIfPresent(String.self, forKey: .type)
         function = try container.decodeIfPresent(

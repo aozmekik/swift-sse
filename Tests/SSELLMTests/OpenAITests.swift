@@ -172,6 +172,60 @@ struct OpenAITests {
             try choice.toolCalls[0].decodeArguments(as: Weather.self) == Weather(city: "Ankara"))
     }
 
+    @Test("Parallel tool calls without an index in one chunk stay separate (Gemini-style)")
+    func unindexedToolCallsInOneChunk() throws {
+        let chunks = try openAIChunks([
+            #"{"choices":[{"index":0,"delta":{"role":"assistant","tool_calls":[{"id":"call_a","type":"function","function":{"name":"get_weather","arguments":"{\"city\":\"Paris\"}"}},{"id":"call_b","type":"function","function":{"name":"get_time","arguments":"{\"tz\":\"CET\"}"}}]}}]}"#,
+            #"{"choices":[{"index":0,"delta":{},"finish_reason":"tool_calls"}]}"#,
+        ])
+        #expect(chunks[0].choices[0].delta.toolCalls.map(\.index) == [nil, nil])
+        var accumulator = OpenAIChatCompletionAccumulator()
+        for chunk in chunks {
+            accumulator.add(chunk)
+        }
+        let calls = try #require(accumulator.choices.first?.toolCalls)
+        #expect(calls.map(\.index) == [0, 1])
+        #expect(calls.map(\.id) == ["call_a", "call_b"])
+        #expect(calls.map(\.name) == ["get_weather", "get_time"])
+        #expect(try calls[0].decodeArguments(as: [String: String].self) == ["city": "Paris"])
+        #expect(try calls[1].decodeArguments(as: [String: String].self) == ["tz": "CET"])
+    }
+
+    @Test("Tool calls without an index are told apart by their IDs across chunks")
+    func unindexedToolCallsAcrossChunks() throws {
+        let chunks = try openAIChunks([
+            #"{"choices":[{"delta":{"tool_calls":[{"id":"call_a","function":{"name":"a","arguments":"{}"}}]}}]}"#,
+            #"{"choices":[{"delta":{"tool_calls":[{"id":"call_b","function":{"name":"b","arguments":"[]"}}]}}]}"#,
+            #"{"choices":[{"delta":{"tool_calls":[{"id":"call_b","function":{"arguments":""}}]}}]}"#,
+        ])
+        var accumulator = OpenAIChatCompletionAccumulator()
+        for chunk in chunks {
+            accumulator.add(chunk)
+        }
+        let calls = try #require(accumulator.choices.first?.toolCalls)
+        #expect(calls.map(\.id) == ["call_a", "call_b"])
+        #expect(calls.map(\.name) == ["a", "b"])
+        #expect(calls.map(\.arguments) == ["{}", "[]"])
+    }
+
+    @Test("Fragments without an index or ID continue the most recent call")
+    func unindexedFragmentsContinue() throws {
+        let chunks = try openAIChunks([
+            #"{"choices":[{"delta":{"tool_calls":[{"id":"call_a","type":"function","function":{"name":"lookup","arguments":"{\"q\":"}}]}}]}"#,
+            #"{"choices":[{"delta":{"tool_calls":[{"function":{"arguments":"\"swift\"}"}}]}}]}"#,
+            #"{"choices":[{"delta":{"tool_calls":[{"function":{"arguments":""}},{"function":{"name":"second","arguments":"{}"}}]}}]}"#,
+        ])
+        var accumulator = OpenAIChatCompletionAccumulator()
+        for chunk in chunks {
+            accumulator.add(chunk)
+        }
+        let calls = try #require(accumulator.choices.first?.toolCalls)
+        #expect(calls.map(\.name) == ["lookup", "second"])
+        #expect(calls.map(\.id) == ["call_a", nil])
+        #expect(calls[0].arguments == #"{"q":"swift"}"#)
+        #expect(calls[1].arguments == "{}")
+    }
+
     @Test("Arguments cut off mid-stream fail to decode")
     func truncatedArguments() throws {
         let chunks = try openAIChunks([

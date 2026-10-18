@@ -16,6 +16,11 @@ import Foundation
 /// Text, refusal and tool call arguments are concatenated. A tool call's ID, type and name are
 /// taken from the first fragment that carries them, so servers that repeat them in every fragment
 /// are handled too.
+///
+/// Fragments are grouped into calls by their `index`. Some OpenAI-compatible servers omit it and
+/// send each call whole or as consecutive fragments; a fragment without an index then continues
+/// the most recently started call, unless it carries a different call ID or is not the first
+/// tool call fragment of its chunk, in which case it starts a new call.
 public struct OpenAIChatCompletionAccumulator: Sendable {
     /// The completion ID, from the first chunk that carried one.
     public private(set) var id: String?
@@ -86,11 +91,12 @@ public struct OpenAIChatCompletionAccumulator: Sendable {
             if let fragment = update.delta.refusal {
                 refusal = (refusal ?? "") + fragment
             }
-            for fragment in update.delta.toolCalls {
-                if let position = toolCalls.firstIndex(where: { $0.index == fragment.index }) {
-                    toolCalls[position].apply(fragment)
+            for (position, fragment) in update.delta.toolCalls.enumerated() {
+                let index = fragment.index ?? inferredIndex(of: fragment, isFirst: position == 0)
+                if let existing = toolCalls.firstIndex(where: { $0.index == index }) {
+                    toolCalls[existing].apply(fragment)
                 } else {
-                    var call = ToolCall(index: fragment.index)
+                    var call = ToolCall(index: index)
                     call.apply(fragment)
                     toolCalls.append(call)
                     toolCalls.sort { $0.index < $1.index }
@@ -100,11 +106,30 @@ public struct OpenAIChatCompletionAccumulator: Sendable {
                 finishReason = reason
             }
         }
+
+        /// The call that a fragment without an `index` belongs to.
+        ///
+        /// Without indices, calls start in order, so the most recently started call is the one
+        /// with the largest index.
+        private func inferredIndex(
+            of fragment: OpenAIChatCompletionChunk.ToolCallDelta,
+            isFirst: Bool
+        ) -> Int {
+            guard let last = toolCalls.last else { return 0 }
+            let continuesLast: Bool
+            if let id = fragment.id, let lastID = last.id {
+                continuesLast = id == lastID
+            } else {
+                continuesLast = isFirst && fragment.id == nil
+            }
+            return continuesLast ? last.index : last.index + 1
+        }
     }
 
     /// A tool call assembled from its fragments.
     public struct ToolCall: Sendable, Hashable {
-        /// The position of the call in the message.
+        /// The position of the call in the message: the server's `index`, or the order in which
+        /// the calls started for servers that omit it.
         public var index: Int
         /// The tool call ID, to send back with the tool result.
         public var id: String?
